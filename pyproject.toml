@@ -1,0 +1,23 @@
+[project]
+name = "slack-mcp-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-core>=0.3",
+    "langchain-anthropic>=0.3",
+    "mcp>=1.0",
+    "slack-bolt>=1.21",
+]
+
+[project.optional-dependencies]
+openai = ["langchain-openai>=0.2"]
+bedrock = ["langchain-aws>=0.2"]
+ollama = ["langchain-ollama>=0.2"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["slack_agent"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

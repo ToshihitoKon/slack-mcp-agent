@@ -254,42 +254,30 @@ LangChainの `BaseChatModel` を通じて複数のLLMプロバイダーを統一
 ```json
 {
   "models": {
-    "standard": {
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-5"
-    },
-    "light": {
-      "provider": "anthropic",
-      "model": "claude-haiku-4-5"
+    "provider": "anthropic",
+    "standard": "claude-sonnet-4-5",
+    "light": "claude-haiku-4-5",
+    "credentials": {
+      "api_key": "${ANTHROPIC_API_KEY}"
     }
   }
 }
 ```
 
-- `models.standard`: orchestratorが使用するモデル
-- `models.light`: compressorが使用するモデル
+- `models.provider`: 使用するLLMプロバイダー（全モデル共通）
+- `models.standard`: orchestratorが使用するモデル名
+- `models.light`: compressorが使用するモデル名
+- `models.credentials`: プロバイダーへの認証情報。`config.py` が解釈してLangChainクラスに明示的に渡す
 - `provider` に応じて `config.py` が適切なLangChainクラスをインスタンス化する
 
-### プロバイダー別の追加設定例
+#### credentialsのプロバイダー別フィールド
 
-```json
-{
-  "models": {
-    "standard": {
-      "provider": "bedrock",
-      "model": "anthropic.claude-sonnet-4-5",
-      "region": "us-east-1"
-    },
-    "light": {
-      "provider": "ollama",
-      "model": "llama3",
-      "base_url": "${OLLAMA_BASE_URL:-http://localhost:11434}"
-    }
-  }
-}
-```
-
-プロバイダーごとに必要な追加フィールド（`region`、`base_url` 等）を `config.py` が解釈してインスタンス化する。
+| プロバイダー | フィールド |
+|---|---|
+| `anthropic` | `api_key` |
+| `openai` | `api_key` |
+| `bedrock` | `region`、`access_key_id`、`secret_access_key`、`session_token`（省略可） |
+| `ollama` | `base_url`（省略時: `http://localhost:11434`） |
 
 ---
 

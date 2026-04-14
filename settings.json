@@ -1,0 +1,26 @@
+{
+  "slack": {
+    "bot_token": "${SLACK_BOT_TOKEN}",
+    "app_token": "${SLACK_APP_TOKEN}",
+    "allowed_user_ids": []
+  },
+  "models": {
+    "provider": "anthropic",
+    "standard": "claude-sonnet-4-5",
+    "light": "claude-haiku-4-5-20251001",
+    "credentials": {
+      "api_key": "${ANTHROPIC_API_KEY}"
+    }
+  },
+  "retry": {
+    "max_attempts": 3,
+    "backoff_base_seconds": 1.0
+  },
+  "cache": {
+    "ttl_hours": 6
+  },
+  "agent": {
+    "compression_threshold_bytes": 10000,
+    "recursion_limit": 25
+  }
+}
