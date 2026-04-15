@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 _ORCHESTRATOR_SYSTEM_PROMPT = """\
 You are a helpful assistant with access to various tools.
 Answer the user's questions accurately. Use tools when needed.
-When making tool calls, also include a brief progress message in the format:
-<progress>Brief description of what you are doing</progress>
 """
 
 _COMPRESSOR_SYSTEM_PROMPT = """\
@@ -30,8 +28,8 @@ Respond ONLY with valid JSON matching:
 """
 
 
-def _build_orchestrator_system(cache_references: list[CacheReference]) -> str:
-    prompt = _ORCHESTRATOR_SYSTEM_PROMPT
+def _build_orchestrator_system(cache_references: list[CacheReference], extra_prompt: str = "") -> str:
+    prompt = (extra_prompt.strip() + "\n\n" + _ORCHESTRATOR_SYSTEM_PROMPT) if extra_prompt.strip() else _ORCHESTRATOR_SYSTEM_PROMPT
     if cache_references:
         refs_text = "\n".join(
             f"- cache_key={r['cache_key']} tool={r['tool_name']} index={r['content_index']}"
@@ -41,23 +39,36 @@ def _build_orchestrator_system(cache_references: list[CacheReference]) -> str:
     return prompt
 
 
-def _extract_progress_message(ai_message: AIMessage) -> str | None:
-    content = ai_message.content
-    if not isinstance(content, str):
+def _build_pending_message(response: AIMessage) -> str | None:
+    if not response.tool_calls:
         return None
-    import re
-    m = re.search(r"<progress>(.*?)</progress>", content, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    return None
+    lines = []
+    # AIMessageのテキスト部分（思考・説明）があれば先に追加
+    content = response.content
+    def _quote(text: str) -> str:
+        return "\n".join(f"> _{line}_" for line in text.strip().splitlines())
+
+    if isinstance(content, str) and content.strip():
+        lines.append(_quote(content))
+    elif isinstance(content, list):
+        # content blocksの場合（anthropicなど）
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text" and block.get("text", "").strip():
+                lines.append(_quote(block["text"]))
+    # tool calls
+    for tc in response.tool_calls:
+        args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)
+        lines.append(f"> _{tc['name']} {args_str}_")
+    return "\n".join(lines)
 
 
 async def orchestrator_node(
     state: AgentState,
     standard_llm: BaseChatModel,
     retry_config,
+    extra_prompt: str = "",
 ) -> dict:
-    system_msg = SystemMessage(content=_build_orchestrator_system(state.get("cache_references", [])))
+    system_msg = SystemMessage(content=_build_orchestrator_system(state.get("cache_references", []), extra_prompt))
     messages = [system_msg] + list(state["messages"])
 
     async def _invoke():
@@ -69,15 +80,9 @@ async def orchestrator_node(
         backoff_base=retry_config.backoff_base_seconds,
     )
 
-    pending = None
-    if response.tool_calls:
-        pending = _extract_progress_message(response)
-        if pending is None:
-            pending = "Processing..."
-
     return {
         "messages": [response],
-        "pending_progress_message": pending,
+        "pending_progress_message": _build_pending_message(response),
     }
 
 

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 
 
@@ -39,9 +40,8 @@ class SlackConfig:
 
 @dataclass
 class ModelConfig:
-    provider: str
     model: str
-    credentials: dict
+    options: dict
 
 
 @dataclass
@@ -84,9 +84,9 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
 
     models_raw = raw["models"]
     provider = models_raw["provider"]
-    credentials = models_raw.get("credentials", {})
-    standard_model = ModelConfig(provider=provider, model=models_raw["standard"], credentials=credentials)
-    light_model = ModelConfig(provider=provider, model=models_raw["light"], credentials=credentials)
+    model_options = models_raw.get("options", {})
+    standard_model = ModelConfig(model=f"{provider}:{models_raw['standard']}", options=model_options)
+    light_model = ModelConfig(model=f"{provider}:{models_raw['light']}", options=model_options)
 
     retry_raw = raw.get("retry", {})
     retry = RetryConfig(
@@ -114,30 +114,4 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
 
 
 def build_llm(model_config: ModelConfig) -> BaseChatModel:
-    provider = model_config.provider
-    model = model_config.model
-    creds = model_config.credentials
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(model=model, api_key=creds["api_key"])
-
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model, api_key=creds["api_key"])
-
-    if provider == "bedrock":
-        from langchain_aws import ChatBedrock
-        return ChatBedrock(
-            model_id=model,
-            region_name=creds.get("region"),
-            aws_access_key_id=creds.get("access_key_id"),
-            aws_secret_access_key=creds.get("secret_access_key"),
-            aws_session_token=creds.get("session_token"),
-        )
-
-    if provider == "ollama":
-        from langchain_ollama import ChatOllama
-        return ChatOllama(model=model, base_url=creds.get("base_url", "http://localhost:11434"))
-
-    raise ValueError(f"Unsupported provider: {provider}")
+    return init_chat_model(model_config.model, **model_config.options)

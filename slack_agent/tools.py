@@ -1,8 +1,9 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, StructuredTool
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -59,21 +60,20 @@ def _make_langchain_tool(server_name: str, mcp_tool, params: StdioServerParamete
     tool_description = mcp_tool.description or ""
     input_schema = mcp_tool.inputSchema or {}
 
-    class _MCPTool(BaseTool):
-        name: str = tool_name
-        description: str = tool_description
+    async def _arun(**kwargs: Any) -> str:
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool(mcp_tool.name, arguments=kwargs)
+                return str(result.content)
 
-        async def _arun(self, **kwargs) -> str:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    result = await session.call_tool(mcp_tool.name, arguments=kwargs)
-                    return str(result.content)
-
-        def _run(self, **kwargs) -> str:
-            raise NotImplementedError("Use async")
-
-    return _MCPTool()
+    return StructuredTool(
+        name=tool_name,
+        description=tool_description,
+        args_schema=input_schema,
+        coroutine=_arun,
+        func=None,
+    )
 
 
 def make_cache_fetcher_tool(cache_store: CacheStore) -> BaseTool:

@@ -3,6 +3,7 @@ from typing import Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, StateGraph
 
 from .cache import CacheStore
@@ -37,15 +38,18 @@ def build_graph(
     light_llm: BaseChatModel,
     tools_by_name: dict,
     cache_store: CacheStore,
-    slack_notify_func: Callable | None = None,
+    extra_prompt: str = "",
 ):
     graph = StateGraph(AgentState)
 
     async def orchestrator(state: AgentState) -> dict:
-        return await orchestrator_node(state, standard_llm, config.retry)
+        return await orchestrator_node(state, standard_llm, config.retry, extra_prompt)
 
     async def tool_executor(state: AgentState) -> dict:
-        return await tool_executor_node(state, tools_by_name, slack_notify_func, config.retry)
+        from langgraph.config import get_config
+        rconfig = get_config()
+        slack_notify = rconfig.get("configurable", {}).get("slack_notify")
+        return await tool_executor_node(state, tools_by_name, slack_notify, config.retry)
 
     async def compressor(state: AgentState) -> dict:
         return await compressor_node(
