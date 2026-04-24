@@ -62,6 +62,15 @@ class AgentConfig:
 
 
 @dataclass
+class StorageConfig:
+    """LangGraph checkpointer のバックエンド設定。
+
+    type: "memory" のみ対応。将来 sqlite/postgres を追加予定。
+    """
+    type: str
+
+
+@dataclass
 class AppConfig:
     slack: SlackConfig
     standard_model: ModelConfig
@@ -69,6 +78,7 @@ class AppConfig:
     retry: RetryConfig
     cache: CacheConfig
     agent: AgentConfig
+    storage: StorageConfig
 
 
 def load_config(settings_path: str = "settings.json") -> AppConfig:
@@ -103,6 +113,9 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
         recursion_limit=agent_raw.get("recursion_limit", 25),
     )
 
+    storage_raw = raw.get("storage", {"type": "memory"})
+    storage = StorageConfig(type=storage_raw.get("type", "memory"))
+
     return AppConfig(
         slack=slack,
         standard_model=standard_model,
@@ -110,6 +123,7 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
         retry=retry,
         cache=cache,
         agent=agent,
+        storage=storage,
     )
 
 

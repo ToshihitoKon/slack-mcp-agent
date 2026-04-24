@@ -4,6 +4,7 @@ from typing import Callable
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
 from .cache import CacheStore
@@ -39,6 +40,7 @@ def build_graph(
     tools_by_name: dict,
     cache_store: CacheStore,
     extra_prompt: str = "",
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     graph = StateGraph(AgentState)
 
@@ -72,4 +74,4 @@ def build_graph(
     })
     graph.add_edge("compressor", "orchestrator")
 
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)

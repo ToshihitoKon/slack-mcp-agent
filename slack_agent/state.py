@@ -21,3 +21,5 @@ class AgentState(TypedDict):
     compression_threshold: int
     cache_references: list[CacheReference]
     pending_progress_message: str | None
+    # 最後に bot が postMessage した ts。次回起動時の差分取得 (oldest) に使う
+    last_bot_response_ts: str | None

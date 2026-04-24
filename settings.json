@@ -5,9 +5,9 @@
     "allowed_user_ids": []
   },
   "models": {
-    "provider": "bedrock",
-    "standard": "global.anthropic.claude-sonnet-4-6",
-    "light": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "provider": "openai",
+    "standard": "gpt-5-nano-2025-08-07",
+    "light": "gpt-5-nano-2025-08-07",
     "options": {}
   },
   "retry": {
@@ -20,5 +20,8 @@
   "agent": {
     "compression_threshold_bytes": 10000,
     "recursion_limit": 25
+  },
+  "storage": {
+    "type": "memory"
   }
 }

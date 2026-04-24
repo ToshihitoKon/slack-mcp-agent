@@ -2,16 +2,26 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
 from slack_agent.cache import InMemoryCacheStore
+from slack_agent.checkpointer import create_checkpointer
 from slack_agent.config import build_llm, load_config, _expand_recursive
 from slack_agent.graph import build_graph
 from slack_agent.slack_handler import create_app, run_app
 from slack_agent.tools import load_mcp_tools, make_cache_fetcher_tool, _load_server_tools
 
-logging.basicConfig(level=logging.INFO)
+# DEBUG_LLM=1 で LangChain の verbose/debug を有効にし、LLM への入出力を全部出す
+if os.environ.get("DEBUG_LLM"):
+    from langchain_core.globals import set_debug, set_verbose
+    set_debug(True)
+    set_verbose(True)
+    logging.basicConfig(level=logging.DEBUG)
+else:
+    logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +82,9 @@ async def main():
         extra_prompt = prompt_path.read_text()
         logger.info("Loaded prompt.md as initial prompt")
 
+    checkpointer = create_checkpointer(config.storage)
+    logger.info("Checkpointer initialized: type=%s", config.storage.type)
+
     compiled_graph = build_graph(
         config=config,
         standard_llm=standard_llm,
@@ -79,6 +92,7 @@ async def main():
         tools_by_name=tools_by_name,
         cache_store=cache_store,
         extra_prompt=extra_prompt,
+        checkpointer=checkpointer,
     )
 
     app = create_app(config, compiled_graph, config.agent)
