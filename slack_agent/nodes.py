@@ -71,6 +71,18 @@ async def orchestrator_node(
     system_msg = SystemMessage(content=_build_orchestrator_system(state.get("cache_references", []), extra_prompt))
     messages = [system_msg] + list(state["messages"])
 
+    logger.info("orchestrator invoke: %d messages", len(messages))
+    for i, m in enumerate(messages):
+        tc = getattr(m, "tool_calls", None)
+        tcid = getattr(m, "tool_call_id", None)
+        logger.info(
+            "  [%d] %s tool_calls=%s tool_call_id=%s content=%r",
+            i, type(m).__name__,
+            [c.get("name") for c in tc] if tc else None,
+            tcid,
+            (str(m.content)[:80] if m.content else "")
+        )
+
     async def _invoke():
         return await standard_llm.ainvoke(messages)
 
@@ -224,9 +236,12 @@ async def compressor_node(
                 )
             )
 
+        # 元 ToolMessage の id を引き継ぐことで、add_messages reducer に
+        # 「追加」ではなく「置換」と認識させる (checkpointer 利用時の重複防止)
         compressed_msg = ToolMessage(
             content=f"[Compressed]\n{focused_summary}",
             tool_call_id=msg.tool_call_id,
+            id=msg.id,
         )
         updated_messages.append(compressed_msg)
 
