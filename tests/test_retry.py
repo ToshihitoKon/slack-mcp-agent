@@ -2,7 +2,11 @@
 
 import pytest
 
-from slack_agent.retry import _should_retry_exception, retry_async
+from slack_agent.retry import (
+    _describe_exception,
+    _should_retry_exception,
+    retry_async,
+)
 
 
 class _HTTPError(Exception):
@@ -101,3 +105,25 @@ async def test_retry_passes_through_args_and_kwargs():
 
     result = await retry_async(func, 1, 2, max_attempts=1, backoff_base=0, c=3)
     assert result == 6
+
+
+def test_describe_exception_plain():
+    assert _describe_exception(ValueError("boom")) == "ValueError: boom"
+
+
+def test_describe_exception_unwraps_exception_group():
+    """TaskGroup の ExceptionGroup は sub-exception を展開して見せる。"""
+    group = ExceptionGroup(
+        "unhandled errors in a TaskGroup",
+        [TimeoutError("read timed out"), ConnectionError("broken pipe")],
+    )
+    desc = _describe_exception(group)
+    assert "TimeoutError: read timed out" in desc
+    assert "ConnectionError: broken pipe" in desc
+
+
+def test_describe_exception_nested_group():
+    inner = ExceptionGroup("inner", [RuntimeError("deep")])
+    outer = ExceptionGroup("outer", [inner])
+    desc = _describe_exception(outer)
+    assert "RuntimeError: deep" in desc

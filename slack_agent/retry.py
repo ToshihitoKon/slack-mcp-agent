@@ -19,6 +19,17 @@ def _should_retry_exception(exc: Exception) -> bool:
     return True
 
 
+def _describe_exception(exc: BaseException) -> str:
+    """例外を説明する文字列。ExceptionGroup (TaskGroup 例外) は
+    sub-exception を再帰的に展開して中身を見えるようにする。
+    """
+    group = getattr(exc, "exceptions", None)
+    if group is not None:
+        inner = "; ".join(_describe_exception(e) for e in group)
+        return f"{type(exc).__name__}[{inner}]"
+    return f"{type(exc).__name__}: {exc}"
+
+
 async def retry_async(
     func: Callable,
     *args,
@@ -33,15 +44,19 @@ async def retry_async(
             return await func(*args, **kwargs)
         except Exception as exc:
             last_exc = exc
+            desc = _describe_exception(exc)
             if not _should_retry_exception(exc):
-                logger.warning("Non-retryable error (attempt %d/%d): %s", attempt, max_attempts, exc)
+                logger.warning("Non-retryable error (attempt %d/%d): %s", attempt, max_attempts, desc)
                 raise
             if attempt == max_attempts:
                 break
             wait = backoff_base * (2 ** (attempt - 1))
             logger.warning(
                 "Retryable error (attempt %d/%d), retrying in %.1fs: %s",
-                attempt, max_attempts, wait, exc,
+                attempt, max_attempts, wait, desc,
             )
             await asyncio.sleep(wait)
+    logger.error(
+        "All %d attempts failed: %s", max_attempts, _describe_exception(last_exc)
+    )
     raise last_exc
