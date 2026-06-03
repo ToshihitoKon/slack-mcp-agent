@@ -67,7 +67,7 @@ def _config() -> AppConfig:
         light_model=ModelConfig(model="x:y", options={}),
         retry=RetryConfig(max_attempts=1, backoff_base_seconds=0),
         cache=CacheConfig(ttl_hours=6),
-        agent=AgentConfig(compression_threshold_bytes=10000, recursion_limit=25, progress_mode="auto"),
+        agent=AgentConfig(compression_threshold_bytes=10000, recursion_limit=25, progress_mode="auto", mcp_tool_timeout_seconds=60),
         storage=StorageConfig(type="memory"),
     )
 

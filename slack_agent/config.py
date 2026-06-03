@@ -61,6 +61,9 @@ class AgentConfig:
     recursion_limit: int
     # 進捗表示モード: "auto" (Plan Block を試し失敗で text) / "plan" / "text"
     progress_mode: str
+    # MCP ツール呼び出しの応答待ちタイムアウト秒。応答が無い MCP サーバーで
+    # 無限ハングするのを防ぐ。
+    mcp_tool_timeout_seconds: float
 
 
 @dataclass
@@ -114,6 +117,7 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
         compression_threshold_bytes=agent_raw.get("compression_threshold_bytes", 10000),
         recursion_limit=agent_raw.get("recursion_limit", 25),
         progress_mode=agent_raw.get("progress_mode", "auto"),
+        mcp_tool_timeout_seconds=agent_raw.get("mcp_tool_timeout_seconds", 60.0),
     )
 
     storage_raw = raw.get("storage", {"type": "memory"})

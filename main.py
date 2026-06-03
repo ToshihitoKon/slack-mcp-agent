@@ -67,7 +67,10 @@ async def main():
 
     cache_store = InMemoryCacheStore()
 
-    mcp_tools = await load_mcp_tools(args.mcp_config)
+    mcp_tools = await load_mcp_tools(
+        args.mcp_config,
+        tool_timeout_seconds=config.agent.mcp_tool_timeout_seconds,
+    )
     cache_fetcher = make_cache_fetcher_tool(cache_store)
     all_tools = mcp_tools + [cache_fetcher]
 
