@@ -277,14 +277,14 @@ async def test_progress_reporter_receives_task_transitions():
     assert ("tc1", "complete") in statuses
     # in_progress が complete より先
     assert statuses.index(("tc1", "in_progress")) < statuses.index(("tc1", "complete"))
-    # in_progress 時に title が付く
+    # 経緯テキストが無い場合、title はツール名にフォールバックする
     in_progress = [e for e in reporter.events if e[2] == "in_progress"][0]
-    assert "srv__search" in in_progress[1]
+    assert in_progress[1] == "srv__search"
 
 
 @pytest.mark.asyncio
-async def test_progress_reporter_receives_reasoning_as_details():
-    """ツール呼び出しを伴う AIMessage の content (経緯) が先頭タスクの details に渡る。"""
+async def test_progress_reporter_reasoning_in_title_dump_in_details():
+    """経緯は先頭タスクの title (見出し)、ツール dump は各タスクの details に出る。"""
     responses = [
         AIMessage(
             content="進捗を確認します",
@@ -304,8 +304,14 @@ async def test_progress_reporter_receives_reasoning_as_details():
         config={"configurable": {"progress_reporter": reporter}},
     )
 
-    # in_progress イベントを task_id ごとに取得
-    in_progress = {tid: details for tid, _t, st, details in reporter.events if st == "in_progress"}
-    # 先頭タスク (tc1) にのみ経緯が details として付く
-    assert in_progress["tc1"] == "進捗を確認します"
-    assert in_progress["tc2"] is None
+    in_progress = {
+        tid: (title, details)
+        for tid, title, st, details in reporter.events
+        if st == "in_progress"
+    }
+    # 先頭タスク (tc1) の title に経緯、後続 (tc2) はツール名
+    assert in_progress["tc1"][0] == "進捗を確認します"
+    assert in_progress["tc2"][0] == "srv__search"
+    # ツール dump は各タスクの details に入る (引数を含む)
+    assert in_progress["tc1"][1] == 'srv__search {"q": "a"}'
+    assert in_progress["tc2"][1] == 'srv__search {"q": "b"}'
