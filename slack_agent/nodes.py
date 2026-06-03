@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -26,6 +27,40 @@ Given a tool result and the user's query, produce:
 Respond ONLY with valid JSON matching:
 {"focused_summary": "...", "content_index": "..."}
 """
+
+# ```json ... ``` や ``` ... ``` で囲まれたコードフェンスを剥がす
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
+
+
+def _extract_json_object(text: str) -> dict:
+    """LLM 応答テキストから JSON オブジェクトを堅牢に抽出する。
+
+    軽量モデルはコードフェンスや前置きテキストを付けることがあり、
+    json.loads をそのまま掛けると失敗する。以下の順で復旧を試みる:
+      1. そのまま json.loads
+      2. コードフェンスを剥がして json.loads
+      3. 最初の { から最後の } までを抜き出して json.loads
+    いずれも失敗した場合は ValueError を送出する。
+    """
+    text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    stripped = _CODE_FENCE_RE.sub("", text).strip()
+    if stripped != text:
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        return json.loads(match.group())
+
+    raise ValueError(f"No JSON object found in response: {text[:200]!r}")
 
 
 def _build_orchestrator_system(cache_references: list[CacheReference], extra_prompt: str = "") -> str:
@@ -194,6 +229,13 @@ async def compressor_node(
             user_query = str(msg.content)
             break
 
+    # 構造化出力でモデルに JSON を強制する。未対応モデルの場合は
+    # 生テキストを _extract_json_object でフォールバックパースする。
+    try:
+        structured_llm = light_llm.with_structured_output(CompressorResult)
+    except (NotImplementedError, AttributeError):
+        structured_llm = None
+
     for msg in messages:
         if not isinstance(msg, ToolMessage):
             updated_messages.append(msg)
@@ -209,23 +251,53 @@ async def compressor_node(
             f"User query: {user_query}\n\nTool result:\n{content}"
         )
 
-        async def _compress():
-            return await light_llm.ainvoke([
-                SystemMessage(content=_COMPRESSOR_SYSTEM_PROMPT),
-                {"role": "user", "content": compress_prompt},
-            ])
+        compress_messages = [
+            SystemMessage(content=_COMPRESSOR_SYSTEM_PROMPT),
+            {"role": "user", "content": compress_prompt},
+        ]
+
+        async def _compress_structured():
+            # with_structured_output は dict (CompressorResult) を直接返す
+            return await structured_llm.ainvoke(compress_messages)
+
+        async def _compress_text():
+            response = await light_llm.ainvoke(compress_messages)
+            return _extract_json_object(str(response.content))
 
         try:
-            response = await retry_async(
-                _compress,
-                max_attempts=retry_config.max_attempts,
-                backoff_base=retry_config.backoff_base_seconds,
-            )
-            parsed: CompressorResult = json.loads(str(response.content))
+            if structured_llm is not None:
+                parsed: CompressorResult = await retry_async(
+                    _compress_structured,
+                    max_attempts=retry_config.max_attempts,
+                    backoff_base=retry_config.backoff_base_seconds,
+                )
+            else:
+                parsed = await retry_async(
+                    _compress_text,
+                    max_attempts=retry_config.max_attempts,
+                    backoff_base=retry_config.backoff_base_seconds,
+                )
         except Exception as exc:
-            logger.error("Compression failed: %s", exc)
-            updated_messages.append(msg)
-            continue
+            # 構造化出力が実行時に失敗した場合も生テキスト抽出にフォールバック
+            if structured_llm is not None:
+                logger.warning(
+                    "Structured compression failed (%s); falling back to text parsing",
+                    exc,
+                )
+                try:
+                    parsed = await retry_async(
+                        _compress_text,
+                        max_attempts=retry_config.max_attempts,
+                        backoff_base=retry_config.backoff_base_seconds,
+                    )
+                except Exception as exc2:
+                    logger.error("Compression failed: %s", exc2)
+                    updated_messages.append(msg)
+                    continue
+            else:
+                logger.error("Compression failed: %s", exc)
+                updated_messages.append(msg)
+                continue
 
         focused_summary = parsed.get("focused_summary", content[:500])
         content_index = parsed.get("content_index", "")
