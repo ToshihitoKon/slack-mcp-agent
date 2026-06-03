@@ -67,7 +67,7 @@ def _config() -> AppConfig:
         light_model=ModelConfig(model="x:y", options={}),
         retry=RetryConfig(max_attempts=1, backoff_base_seconds=0),
         cache=CacheConfig(ttl_hours=6),
-        agent=AgentConfig(compression_threshold_bytes=10000, recursion_limit=25),
+        agent=AgentConfig(compression_threshold_bytes=10000, recursion_limit=25, progress_mode="auto"),
         storage=StorageConfig(type="memory"),
     )
 
@@ -81,7 +81,6 @@ def _initial_state(text: str) -> dict:
         "messages": [HumanMessage(content=text)],
         "compression_threshold": 10000,
         "cache_references": [],
-        "pending_progress_message": None,
     }
 
 
@@ -241,3 +240,43 @@ async def test_checkpointer_isolates_distinct_threads():
     b_contents = [str(m.content) for m in b["messages"]]
     assert "thread A msg" in a_contents and "thread B msg" not in a_contents
     assert "thread B msg" in b_contents and "thread A msg" not in b_contents
+
+
+class _RecordingReporter:
+    """progress_reporter のモック。update_task の呼び出しを記録する。"""
+
+    def __init__(self):
+        self.events: list[tuple] = []
+
+    async def update_task(self, task_id, *, title=None, status="in_progress", output=None):
+        self.events.append((task_id, title, status))
+
+    async def finish(self):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_receives_task_transitions():
+    """configurable 経由で reporter が tool task の in_progress→complete を受け取る。"""
+    responses = [
+        _tool_call_ai("srv__search", {"q": "x"}, "tc1"),
+        AIMessage(content="done"),
+    ]
+    tools = {"srv__search": _FakeTool("small")}
+    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+
+    reporter = _RecordingReporter()
+    await graph.ainvoke(
+        _initial_state("search x"),
+        config={"configurable": {"progress_reporter": reporter}},
+    )
+
+    # tc1 が in_progress → complete と遷移する
+    statuses = [(tid, st) for tid, _title, st in reporter.events]
+    assert ("tc1", "in_progress") in statuses
+    assert ("tc1", "complete") in statuses
+    # in_progress が complete より先
+    assert statuses.index(("tc1", "in_progress")) < statuses.index(("tc1", "complete"))
+    # in_progress 時に title が付く
+    in_progress = [e for e in reporter.events if e[2] == "in_progress"][0]
+    assert "srv__search" in in_progress[1]

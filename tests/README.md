@@ -28,10 +28,11 @@ uv run --extra dev pytest tests/test_retry.py::test_retry_returns_on_success
 | `test_checkpointer.py` | 2 | `slack_agent/checkpointer.py` | `memory` → `MemorySaver` / 未知タイプで `ValueError` |
 | `test_cache_store.py` | 10 | `slack_agent/cache.py` | `make_key` の決定性・引数順非依存・ツール名/引数による差分・キー形式 / `is_expired` / `InMemoryCacheStore` の set-get・miss・期限切れエントリの退避 |
 | `test_cache_flow.py` | 6 | `slack_agent/nodes.py` (キャッシュフロー) | tool 実行時の決定的 `cache_key` 付与 / `cache_fetcher` 自身の除外 / compressor がメタ情報からキャッシュ保存・参照登録 / 閾値以下は非圧縮・非キャッシュ / 不正 JSON 時の元メッセージ保持 / 非 ToolMessage の素通り |
-| `test_graph_flow.py` | 7 | `slack_agent/graph.py` の `build_graph` 全体 | グラフ遷移の統合テスト（下記参照） |
+| `test_graph_flow.py` | 8 | `slack_agent/graph.py` の `build_graph` 全体 | グラフ遷移の統合テスト（下記参照） |
 | `test_slack_handler.py` | 6 | `slack_agent/slack_handler.py` の `ThreadLockManager` | 同一 thread の直列化 / 別 thread の並行性 / 使用後の即時解放 / 待機者がいる間の保持 / 例外時の解放 / 未知 key の release 安全性 |
+| `test_progress.py` | 12 | `slack_agent/progress.py` | PlanBlockReporter の startStream/appendStream/stopStream とタスク status 遷移・output / TextProgressReporter の投稿→更新と複数タスクの順序 / create_reporter の auto フォールバック・mode 強制 / LazyReporter の遅延生成と空時 no-op |
 
-合計 62 テスト。
+合計 82 テスト（`test_graph_flow.py` に reporter 連携の統合テストを 1 件追加）。
 
 ## グラフ遷移の統合テスト (`test_graph_flow.py`)
 
@@ -58,7 +59,7 @@ LangGraph には専用のテスト API は無く、`build_graph` で compile し
 - `_CompressorLLM`: compressor 用 light LLM。常に整形済み JSON を返す。
 - `_FakeTool`: 固定の結果文字列を返すツール。結果サイズを変えることで圧縮経路の有無を切り替える。
 
-> `tool_executor` ノードは `langgraph.config.get_config()` を呼ぶが、compiled graph 経由で実行すれば問題なく動く。`slack_notify` は未設定でも `None` になるだけ。
+> `tool_executor` ノードは `langgraph.config.get_config()` を呼ぶが、compiled graph 経由で実行すれば問題なく動く。`progress_reporter` は未設定でも `None` になるだけ。
 
 ## テスト追加時の指針
 
