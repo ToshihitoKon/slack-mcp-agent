@@ -59,6 +59,34 @@ async def test_plan_block_starts_stream_with_plan_mode():
     assert kwargs["channel"] == "C1"
     assert kwargs["thread_ts"] == "100"
     assert kwargs["task_display_mode"] == "plan"
+    # 未指定なら recipient_* は送らない
+    assert "recipient_team_id" not in kwargs
+    assert "recipient_user_id" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_plan_block_passes_recipient_ids_when_given():
+    """recipient_team_id は startStream に必須なので渡されたら送る。"""
+    client = _RecordingClient()
+    reporter = PlanBlockReporter(
+        client, "C1", "100",
+        recipient_team_id="T123", recipient_user_id="U456",
+    )
+    await reporter.start()
+
+    _, kwargs = client.calls[0]
+    assert kwargs["recipient_team_id"] == "T123"
+    assert kwargs["recipient_user_id"] == "U456"
+
+
+@pytest.mark.asyncio
+async def test_create_reporter_auto_forwards_recipient_team_id():
+    """auto モードでも recipient_team_id が startStream に伝播する。"""
+    client = _RecordingClient()
+    await create_reporter(client, "C1", "100", mode="auto", recipient_team_id="T999")
+
+    start_calls = [kwargs for kind, kwargs in client.calls if kind == "startStream"]
+    assert start_calls and start_calls[0]["recipient_team_id"] == "T999"
 
 
 @pytest.mark.asyncio

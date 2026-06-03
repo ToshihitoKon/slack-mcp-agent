@@ -54,22 +54,40 @@ class ProgressReporter(ABC):
 
 
 class PlanBlockReporter(ProgressReporter):
-    """Plan Block を chat.startStream / chat.appendStream で送る reporter。"""
+    """Plan Block を chat.startStream / chat.appendStream で送る reporter。
 
-    def __init__(self, client, channel: str, thread_ts: str):
+    chat.startStream は recipient_team_id が必須 (無いと missing_recipient_team_id)。
+    DM など 1:1 の文脈では recipient_user_id も渡す。
+    """
+
+    def __init__(
+        self,
+        client,
+        channel: str,
+        thread_ts: str,
+        recipient_team_id: str | None = None,
+        recipient_user_id: str | None = None,
+    ):
         self._client = client
         self._channel = channel
         self._thread_ts = thread_ts
+        self._recipient_team_id = recipient_team_id
+        self._recipient_user_id = recipient_user_id
         self._stream_ts: str | None = None
         # task_id -> title を保持し、status 更新時に title を再送できるようにする
         self._titles: dict[str, str] = {}
 
     async def start(self) -> None:
-        result = await self._client.chat_startStream(
-            channel=self._channel,
-            thread_ts=self._thread_ts,
-            task_display_mode="plan",
-        )
+        kwargs: dict = {
+            "channel": self._channel,
+            "thread_ts": self._thread_ts,
+            "task_display_mode": "plan",
+        }
+        if self._recipient_team_id is not None:
+            kwargs["recipient_team_id"] = self._recipient_team_id
+        if self._recipient_user_id is not None:
+            kwargs["recipient_user_id"] = self._recipient_user_id
+        result = await self._client.chat_startStream(**kwargs)
         self._stream_ts = result["ts"]
 
     async def update_task(
@@ -187,11 +205,21 @@ class LazyReporter(ProgressReporter):
     tool_call が無く即答するケースで空のストリーム/メッセージを作らないため。
     """
 
-    def __init__(self, client, channel: str, thread_ts: str, mode: str = "auto"):
+    def __init__(
+        self,
+        client,
+        channel: str,
+        thread_ts: str,
+        mode: str = "auto",
+        recipient_team_id: str | None = None,
+        recipient_user_id: str | None = None,
+    ):
         self._client = client
         self._channel = channel
         self._thread_ts = thread_ts
         self._mode = mode
+        self._recipient_team_id = recipient_team_id
+        self._recipient_user_id = recipient_user_id
         self._inner: ProgressReporter | None = None
 
     async def start(self) -> None:
@@ -207,7 +235,12 @@ class LazyReporter(ProgressReporter):
     ) -> None:
         if self._inner is None:
             self._inner = await create_reporter(
-                self._client, self._channel, self._thread_ts, self._mode
+                self._client,
+                self._channel,
+                self._thread_ts,
+                self._mode,
+                recipient_team_id=self._recipient_team_id,
+                recipient_user_id=self._recipient_user_id,
             )
         await self._inner.update_task(
             task_id, title=title, status=status, output=output
@@ -223,6 +256,8 @@ async def create_reporter(
     channel: str,
     thread_ts: str,
     mode: str = "auto",
+    recipient_team_id: str | None = None,
+    recipient_user_id: str | None = None,
 ) -> ProgressReporter:
     """mode に応じた reporter を生成する。
 
@@ -235,13 +270,20 @@ async def create_reporter(
         await reporter.start()
         return reporter
 
+    def _plan() -> PlanBlockReporter:
+        return PlanBlockReporter(
+            client, channel, thread_ts,
+            recipient_team_id=recipient_team_id,
+            recipient_user_id=recipient_user_id,
+        )
+
     if mode == "plan":
-        reporter = PlanBlockReporter(client, channel, thread_ts)
+        reporter = _plan()
         await reporter.start()
         return reporter
 
     # auto
-    plan = PlanBlockReporter(client, channel, thread_ts)
+    plan = _plan()
     try:
         await plan.start()
         return plan

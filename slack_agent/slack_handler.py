@@ -146,8 +146,14 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
 
         # 進捗表示: Plan Block (対応環境) またはテキストにフォールバック (Issue #6)。
         # 初回タスクまで実際の投稿は遅延される。
+        # chat.startStream は recipient_team_id が必須なので event/body から取得する。
+        team_id = body.get("team_id") or event.get("team")
         progress_reporter = LazyReporter(
-            client, channel, thread_ts, mode=agent_config.progress_mode
+            client,
+            channel,
+            thread_ts,
+            mode=agent_config.progress_mode,
+            recipient_team_id=team_id,
         )
 
         current_human = HumanMessage(content=text)
