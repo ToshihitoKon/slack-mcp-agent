@@ -242,9 +242,19 @@ async def compressor_node(
             continue
 
         content = str(msg.content)
-        if len(content.encode()) <= threshold:
+        original_size = len(content.encode())
+        if original_size <= threshold:
             updated_messages.append(msg)
             continue
+
+        # ログ用の識別子。値の中身 (PII を含みうる) は出さず、
+        # cache_key・ツール名・サイズなどのメタ情報のみを記録する。
+        meta = msg.additional_kwargs or {}
+        cache_key = meta.get("cache_key")
+        tool_name = meta.get("cache_tool_name", "<unknown>")
+        log_ctx = (
+            f"tool={tool_name} cache_key={cache_key} original_size={original_size}B"
+        )
 
         # Compress this ToolMessage
         compress_prompt = (
@@ -262,7 +272,12 @@ async def compressor_node(
 
         async def _compress_text():
             response = await light_llm.ainvoke(compress_messages)
-            return _extract_json_object(str(response.content))
+            raw = str(response.content)
+            # 受け取ったレスポンスの長さを記録する (中身は出さない)
+            logger.debug("Compression response received: %s response_len=%d", log_ctx, len(raw))
+            return _extract_json_object(raw)
+
+        logger.info("Compressing tool result: %s", log_ctx)
 
         try:
             if structured_llm is not None:
@@ -281,7 +296,8 @@ async def compressor_node(
             # 構造化出力が実行時に失敗した場合も生テキスト抽出にフォールバック
             if structured_llm is not None:
                 logger.warning(
-                    "Structured compression failed (%s); falling back to text parsing",
+                    "Structured compression failed: %s error=%s; falling back to text parsing",
+                    log_ctx,
                     exc,
                 )
                 try:
@@ -291,22 +307,25 @@ async def compressor_node(
                         backoff_base=retry_config.backoff_base_seconds,
                     )
                 except Exception as exc2:
-                    logger.error("Compression failed: %s", exc2)
+                    logger.error("Compression failed: %s error=%s", log_ctx, exc2)
                     updated_messages.append(msg)
                     continue
             else:
-                logger.error("Compression failed: %s", exc)
+                logger.error("Compression failed: %s error=%s", log_ctx, exc)
                 updated_messages.append(msg)
                 continue
 
         focused_summary = parsed.get("focused_summary", content[:500])
         content_index = parsed.get("content_index", "")
 
-        # cache_key は tool_executor_node が決定的に生成し ToolMessage の
-        # additional_kwargs に格納している。LLM 任せにしない。
-        meta = msg.additional_kwargs or {}
-        cache_key = meta.get("cache_key")
+        logger.info(
+            "Compressed tool result: %s compressed_size=%dB",
+            log_ctx,
+            len(focused_summary.encode()),
+        )
 
+        # cache_key は tool_executor_node が決定的に生成し ToolMessage の
+        # additional_kwargs に格納している (ループ冒頭で取得済み)。LLM 任せにしない。
         # MCP tool 由来 (cache_key 付き) の結果だけをキャッシュ保存する。
         if cache_key:
             entry = CacheEntry(
