@@ -16,6 +16,43 @@ _ERROR_MESSAGE = "申し訳ありません。エラーが発生しました。�
 _MENTION_PATTERN = re.compile(r"<@[^>]+>")
 
 
+class ThreadLockManager:
+    """thread_id 単位の asyncio.Lock を参照カウントで管理する。
+
+    同一 thread への並行メッセージで checkpoint state が競合するのを防ぐため、
+    同じ key の処理を直列化する。最後の利用者が抜けたら lock を破棄して
+    メモリリークを防ぐ (使用後の即時解放)。
+
+    acquire/release は内部 dict 操作を _guard で保護することで、
+    取り違えや待機者がいる間の早期破棄を防ぐ。参照カウントは acquire 時
+    (lock 取得を待っている間も含む) に増やすため、待機者がいる限り破棄されない。
+    """
+
+    def __init__(self):
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._refs: dict[str, int] = {}
+        self._guard = asyncio.Lock()
+
+    async def acquire(self, key: str) -> asyncio.Lock:
+        async with self._guard:
+            lock = self._locks.setdefault(key, asyncio.Lock())
+            self._refs[key] = self._refs.get(key, 0) + 1
+        return lock
+
+    async def release(self, key: str) -> None:
+        async with self._guard:
+            remaining = self._refs.get(key, 1) - 1
+            if remaining <= 0:
+                self._refs.pop(key, None)
+                self._locks.pop(key, None)
+            else:
+                self._refs[key] = remaining
+
+    def active_count(self) -> int:
+        """現在管理中の lock 数 (テスト・監視用)。"""
+        return len(self._locks)
+
+
 def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
     app = AsyncApp(token=config.slack.bot_token)
 
@@ -35,13 +72,28 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
             logger.info("Resolved bot_user_id=%s", bot_user_id_holder["id"])
             return bot_user_id_holder["id"]
 
+    # 同一 thread への並行メッセージで checkpoint state が競合するのを防ぐため、
+    # thread_ts 単位で処理を直列化する (Issue #4)。
+    thread_locks = ThreadLockManager()
+
     async def _handle_message(body: dict, say, client):
+        event = body.get("event", {})
+        thread_ts = event.get("thread_ts") or event.get("ts")
+
+        # 同一 thread の処理は直列化する。別 thread は並行のまま。
+        lock = await thread_locks.acquire(thread_ts)
+        try:
+            async with lock:
+                await _process_message(body, say, client, thread_ts)
+        finally:
+            await thread_locks.release(thread_ts)
+
+    async def _process_message(body: dict, say, client, thread_ts: str):
         event = body.get("event", {})
         user_id = event.get("user")
         text = event.get("text", "")
         channel = event.get("channel")
         event_ts = event.get("ts")
-        thread_ts = event.get("thread_ts") or event_ts
 
         # Strip bot mention from text
         text = _MENTION_PATTERN.sub("", text).strip()
