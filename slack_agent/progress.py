@@ -89,8 +89,8 @@ class PlanBlockReporter(ProgressReporter):
         self._stream_ts: str | None = None
         # task_id -> title を保持し、status 更新時に title を再送できるようにする
         self._titles: dict[str, str] = {}
-        # task_id -> details (ツール呼び出し前のエージェント思考)。
-        # status 更新時に消えないよう保持して再送する。
+        # details (ツール dump) を送信済みの task_id。Slack 側で追記される
+        # ため、二重送信を防ぐ「送ったか」の記録として使う。
         self._details: dict[str, str] = {}
 
     async def start(self) -> None:
@@ -117,8 +117,6 @@ class PlanBlockReporter(ProgressReporter):
     ) -> None:
         if title is not None:
             self._titles[task_id] = title
-        if details is not None:
-            self._details[task_id] = details
         # chat.appendStream の task chunk スキーマ:
         #   type="task_update", id, title, status, (details/output/sources)
         # title/output/details は 256 文字制限。
@@ -128,11 +126,12 @@ class PlanBlockReporter(ProgressReporter):
             "title": _truncate(self._titles.get(task_id, task_id)),
             "status": status,
         }
-        # details はツール呼び出し前のエージェント思考。一度設定したら
-        # status 更新のたびに再送して表示を維持する。
-        stored_details = self._details.get(task_id)
-        if stored_details:
-            chunk["details"] = _truncate(stored_details)
+        # details は Slack 側で同一 task_id に追記 (append) される。同じ
+        # status 遷移 (in_progress -> complete) で 2 回送ると dump が二重に
+        # 表示されるため、各 task_id につき 1 度だけ送る。
+        if details is not None and task_id not in self._details:
+            self._details[task_id] = details
+            chunk["details"] = _truncate(details)
         if output is not None:
             chunk["output"] = _truncate(output)
         await self._client.chat_appendStream(

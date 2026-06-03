@@ -134,21 +134,21 @@ async def test_plan_block_includes_output_when_given():
 
 
 @pytest.mark.asyncio
-async def test_plan_block_includes_details_and_keeps_it_on_status_update():
-    """details (ツール前のエージェント思考) は付与され、status 更新後も再送される。"""
+async def test_plan_block_sends_details_only_once_per_task():
+    """details (ツール dump) は Slack 側で追記されるため、各 task につき 1 度だけ送る。"""
     client = _RecordingClient()
     reporter = PlanBlockReporter(client, "C1", "100")
     await reporter.start()
 
     await reporter.update_task(
-        "t1", title="search", status=STATUS_IN_PROGRESS, details="進捗を確認します"
+        "t1", title="search", status=STATUS_IN_PROGRESS, details="dump"
     )
-    # details 無しで status だけ更新しても、保持された details が再送される
+    # 2 回目 (status 更新) では details を再送しない (二重表示を防ぐ)
     await reporter.update_task("t1", status=STATUS_COMPLETE)
 
     appends = [kwargs for kind, kwargs in client.calls if kind == "appendStream"]
-    assert appends[0]["chunks"][0]["details"] == "進捗を確認します"
-    assert appends[1]["chunks"][0]["details"] == "進捗を確認します"
+    assert appends[0]["chunks"][0]["details"] == "dump"
+    assert "details" not in appends[1]["chunks"][0]
 
 
 @pytest.mark.asyncio
