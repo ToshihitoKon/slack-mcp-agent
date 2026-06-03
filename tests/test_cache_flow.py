@@ -33,6 +33,13 @@ class _FakeLightLLM:
         return AIMessage(content='{"focused_summary": "sum", "content_index": "idx"}')
 
 
+class _BrokenLightLLM:
+    """不正な JSON を返す light_llm のモック。"""
+
+    async def ainvoke(self, messages):
+        return AIMessage(content="not a json")
+
+
 def _ai_with_tool_call(name: str, args: dict, call_id: str) -> AIMessage:
     return AIMessage(content="", tool_calls=[{"name": name, "args": args, "id": call_id}])
 
@@ -135,3 +142,49 @@ async def test_small_result_is_not_compressed_or_cached():
     assert out["cache_references"] == []
     assert store.get(key) is None
     assert out["messages"][0].content == "small"
+
+
+@pytest.mark.asyncio
+async def test_compressor_keeps_original_message_on_invalid_json():
+    """compressor LLM が不正な JSON を返したら元の ToolMessage を保持しキャッシュしない。"""
+    store = InMemoryCacheStore()
+    key = CacheStore.make_key("srv__search", {"q": "hello"})
+    big_result = "X" * 20000
+    tm = ToolMessage(
+        content=big_result,
+        tool_call_id="tc1",
+        additional_kwargs={
+            "cache_key": key,
+            "cache_tool_name": "srv__search",
+            "cache_tool_args": {"q": "hello"},
+        },
+    )
+    state = {
+        "messages": [tm],
+        "compression_threshold": 10000,
+        "cache_references": [],
+    }
+
+    out = await compressor_node(state, _BrokenLightLLM(), store, 24, _RetryConfig())
+
+    # 圧縮失敗時は元メッセージをそのまま残し、キャッシュもしない
+    assert out["messages"][0].content == big_result
+    assert out["cache_references"] == []
+    assert store.get(key) is None
+
+
+@pytest.mark.asyncio
+async def test_non_tool_messages_pass_through_compressor():
+    """ToolMessage 以外のメッセージは compressor を素通りする。"""
+    store = InMemoryCacheStore()
+    ai = AIMessage(content="some answer")
+    state = {
+        "messages": [ai],
+        "compression_threshold": 10000,
+        "cache_references": [],
+    }
+
+    out = await compressor_node(state, _FakeLightLLM(), store, 24, _RetryConfig())
+
+    assert out["messages"][0] is ai
+    assert out["cache_references"] == []
