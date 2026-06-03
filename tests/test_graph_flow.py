@@ -248,8 +248,8 @@ class _RecordingReporter:
     def __init__(self):
         self.events: list[tuple] = []
 
-    async def update_task(self, task_id, *, title=None, status="in_progress", output=None):
-        self.events.append((task_id, title, status))
+    async def update_task(self, task_id, *, title=None, status="in_progress", output=None, details=None):
+        self.events.append((task_id, title, status, details))
 
     async def finish(self):
         pass
@@ -272,7 +272,7 @@ async def test_progress_reporter_receives_task_transitions():
     )
 
     # tc1 が in_progress → complete と遷移する
-    statuses = [(tid, st) for tid, _title, st in reporter.events]
+    statuses = [(tid, st) for tid, _title, st, _details in reporter.events]
     assert ("tc1", "in_progress") in statuses
     assert ("tc1", "complete") in statuses
     # in_progress が complete より先
@@ -280,3 +280,32 @@ async def test_progress_reporter_receives_task_transitions():
     # in_progress 時に title が付く
     in_progress = [e for e in reporter.events if e[2] == "in_progress"][0]
     assert "srv__search" in in_progress[1]
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_receives_reasoning_as_details():
+    """ツール呼び出しを伴う AIMessage の content (経緯) が先頭タスクの details に渡る。"""
+    responses = [
+        AIMessage(
+            content="進捗を確認します",
+            tool_calls=[
+                {"name": "srv__search", "args": {"q": "a"}, "id": "tc1"},
+                {"name": "srv__search", "args": {"q": "b"}, "id": "tc2"},
+            ],
+        ),
+        AIMessage(content="done"),
+    ]
+    tools = {"srv__search": _FakeTool("small")}
+    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+
+    reporter = _RecordingReporter()
+    await graph.ainvoke(
+        _initial_state("search"),
+        config={"configurable": {"progress_reporter": reporter}},
+    )
+
+    # in_progress イベントを task_id ごとに取得
+    in_progress = {tid: details for tid, _t, st, details in reporter.events if st == "in_progress"}
+    # 先頭タスク (tc1) にのみ経緯が details として付く
+    assert in_progress["tc1"] == "進捗を確認します"
+    assert in_progress["tc2"] is None

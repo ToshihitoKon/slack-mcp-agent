@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 _ORCHESTRATOR_SYSTEM_PROMPT = """\
 You are a helpful assistant with access to various tools.
 Answer the user's questions accurately. Use tools when needed.
+
+When you call one or more tools, first write a short one-line sentence in the
+user's language stating what you are about to check or do and why
+(e.g. "ポストモーテムの進捗を確認します"). This message is shown alongside the
+tool calls as the reasoning behind them, so make it a purposeful sentence
+rather than a bare restatement of the tool name or arguments.
 """
 
 _COMPRESSOR_SYSTEM_PROMPT = """\
@@ -127,19 +133,25 @@ async def tool_executor_node(
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
         return {}
 
+    # ツールを呼ぶ前のエージェントの思考テキスト (経緯)。Plan Block では
+    # ツールの dump だけが残り経緯が消えてしまうため、この content を
+    # この AIMessage 由来の最初のタスクの details に紐付けて残す。
+    reasoning = str(last_message.content).strip() if last_message.content else ""
+
     tool_messages = []
-    for tool_call in last_message.tool_calls:
+    for idx, tool_call in enumerate(last_message.tool_calls):
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         tool_call_id = tool_call["id"]
 
         # tool_call 1 件を 1 タスクとして進捗表示する (Issue #6)。
-        # task_id には tool_call_id を使う。
+        # task_id には tool_call_id を使う。経緯テキストは先頭タスクにのみ付ける。
         if progress_reporter:
             await progress_reporter.update_task(
                 tool_call_id,
                 title=_task_title(tool_name, tool_args),
                 status=STATUS_IN_PROGRESS,
+                details=reasoning if idx == 0 and reasoning else None,
             )
 
         tool_instance = tools_by_name.get(tool_name)

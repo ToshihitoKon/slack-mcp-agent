@@ -134,6 +134,24 @@ async def test_plan_block_includes_output_when_given():
 
 
 @pytest.mark.asyncio
+async def test_plan_block_includes_details_and_keeps_it_on_status_update():
+    """details (ツール前のエージェント思考) は付与され、status 更新後も再送される。"""
+    client = _RecordingClient()
+    reporter = PlanBlockReporter(client, "C1", "100")
+    await reporter.start()
+
+    await reporter.update_task(
+        "t1", title="search", status=STATUS_IN_PROGRESS, details="進捗を確認します"
+    )
+    # details 無しで status だけ更新しても、保持された details が再送される
+    await reporter.update_task("t1", status=STATUS_COMPLETE)
+
+    appends = [kwargs for kind, kwargs in client.calls if kind == "appendStream"]
+    assert appends[0]["chunks"][0]["details"] == "進捗を確認します"
+    assert appends[1]["chunks"][0]["details"] == "進捗を確認します"
+
+
+@pytest.mark.asyncio
 async def test_plan_block_truncates_long_title_and_output():
     """title / output は 256 文字に切り詰められる。"""
     client = _RecordingClient()
@@ -173,6 +191,22 @@ async def test_text_reporter_posts_then_updates():
     assert client.kinds() == ["postMessage", "update"]
     # 最初の投稿は postMessage、以降は同じ ts を update
     assert client.calls[1][1]["ts"] == "msg-1"
+
+
+@pytest.mark.asyncio
+async def test_text_reporter_renders_details_above_task():
+    """details はタスク行の前に出力され、status 更新後も維持される。"""
+    client = _RecordingClient()
+    reporter = TextProgressReporter(client, "C1", "100")
+    await reporter.start()
+    await reporter.update_task(
+        "t1", title="search", status=STATUS_IN_PROGRESS, details="進捗を確認します"
+    )
+    await reporter.update_task("t1", status=STATUS_COMPLETE)
+
+    last_text = client.calls[-1][1]["text"]
+    assert "進捗を確認します" in last_text
+    assert last_text.index("進捗を確認します") < last_text.index("search")
 
 
 @pytest.mark.asyncio
