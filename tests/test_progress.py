@@ -80,13 +80,21 @@ async def test_plan_block_passes_recipient_ids_when_given():
 
 
 @pytest.mark.asyncio
-async def test_create_reporter_auto_forwards_recipient_team_id():
-    """auto モードでも recipient_team_id が startStream に伝播する。"""
+async def test_create_reporter_auto_forwards_recipient_ids():
+    """auto モードでも recipient_team_id / recipient_user_id が startStream に伝播する。
+
+    チャンネルへのストリーミングでは両方が必須。
+    """
     client = _RecordingClient()
-    await create_reporter(client, "C1", "100", mode="auto", recipient_team_id="T999")
+    await create_reporter(
+        client, "C1", "100", mode="auto",
+        recipient_team_id="T999", recipient_user_id="U999",
+    )
 
     start_calls = [kwargs for kind, kwargs in client.calls if kind == "startStream"]
-    assert start_calls and start_calls[0]["recipient_team_id"] == "T999"
+    assert start_calls
+    assert start_calls[0]["recipient_team_id"] == "T999"
+    assert start_calls[0]["recipient_user_id"] == "U999"
 
 
 @pytest.mark.asyncio
@@ -205,6 +213,23 @@ async def test_lazy_reporter_defers_creation_until_first_task():
     await reporter.update_task("t1", title="x", status=STATUS_IN_PROGRESS)
     # 初回 update で startStream が走る
     assert client.kinds()[0] == "startStream"
+
+
+@pytest.mark.asyncio
+async def test_lazy_reporter_forwards_recipient_ids_to_plan_block():
+    """LazyReporter が recipient_team_id / recipient_user_id を startStream まで伝播する。"""
+    client = _RecordingClient()
+    reporter = LazyReporter(
+        client, "C1", "100", mode="auto",
+        recipient_team_id="T1", recipient_user_id="U1",
+    )
+    await reporter.start()
+    await reporter.update_task("t1", title="x", status=STATUS_IN_PROGRESS)
+
+    start_calls = [kwargs for kind, kwargs in client.calls if kind == "startStream"]
+    assert start_calls
+    assert start_calls[0]["recipient_team_id"] == "T1"
+    assert start_calls[0]["recipient_user_id"] == "U1"
 
 
 @pytest.mark.asyncio
