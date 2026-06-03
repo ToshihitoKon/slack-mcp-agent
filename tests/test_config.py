@@ -74,7 +74,12 @@ def test_load_config_full(tmp_path, monkeypatch):
         },
         "retry": {"max_attempts": 5, "backoff_base_seconds": 2.0},
         "cache": {"ttl_hours": 12},
-        "agent": {"compression_threshold_bytes": 5000, "recursion_limit": 30},
+        "agent": {
+            "compression_threshold_bytes": 5000,
+            "recursion_limit": 30,
+            "progress_mode": "plan",
+            "mcp_tool_timeout_seconds": 120,
+        },
         "storage": {"type": "memory"},
     }
     cfg = load_config(_write_settings(tmp_path, settings))
@@ -90,6 +95,8 @@ def test_load_config_full(tmp_path, monkeypatch):
     assert cfg.cache.ttl_hours == 12
     assert cfg.agent.compression_threshold_bytes == 5000
     assert cfg.agent.recursion_limit == 30
+    assert cfg.agent.progress_mode == "plan"
+    assert cfg.agent.mcp_tool_timeout_seconds == 120
     assert cfg.storage.type == "memory"
 
 
@@ -107,4 +114,6 @@ def test_load_config_applies_defaults(tmp_path):
     assert cfg.cache.ttl_hours == 6
     assert cfg.agent.compression_threshold_bytes == 10000
     assert cfg.agent.recursion_limit == 25
+    assert cfg.agent.progress_mode == "auto"
+    assert cfg.agent.mcp_tool_timeout_seconds == 60.0
     assert cfg.storage.type == "memory"

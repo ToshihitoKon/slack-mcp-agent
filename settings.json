@@ -19,7 +19,9 @@
   },
   "agent": {
     "compression_threshold_bytes": 10000,
-    "recursion_limit": 25
+    "recursion_limit": 25,
+    "progress_mode": "auto",
+    "mcp_tool_timeout_seconds": 60
   },
   "storage": {
     "type": "memory"

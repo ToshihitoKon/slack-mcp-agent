@@ -50,8 +50,8 @@ def build_graph(
     async def tool_executor(state: AgentState) -> dict:
         from langgraph.config import get_config
         rconfig = get_config()
-        slack_notify = rconfig.get("configurable", {}).get("slack_notify")
-        return await tool_executor_node(state, tools_by_name, slack_notify, config.retry)
+        progress_reporter = rconfig.get("configurable", {}).get("progress_reporter")
+        return await tool_executor_node(state, tools_by_name, progress_reporter, config.retry)
 
     async def compressor(state: AgentState) -> dict:
         return await compressor_node(

@@ -48,7 +48,7 @@ def _ai_with_tool_call(name: str, args: dict, call_id: str) -> AIMessage:
 async def test_tool_executor_attaches_deterministic_cache_key():
     """tool 実行時に make_key と一致する cache_key が ToolMessage に付与される。"""
     ai = _ai_with_tool_call("srv__search", {"q": "hello"}, "tc1")
-    state = {"messages": [ai], "pending_progress_message": None}
+    state = {"messages": [ai]}
 
     out = await tool_executor_node(
         state, {"srv__search": _DummyTool(100)}, None, _RetryConfig()
@@ -65,7 +65,7 @@ async def test_tool_executor_attaches_deterministic_cache_key():
 async def test_cache_fetcher_result_is_not_cached():
     """cache_fetcher 自身の結果はキャッシュ対象外 (cache_key を付けない)。"""
     ai = _ai_with_tool_call("cache_fetcher", {"cache_key": "k"}, "tc2")
-    state = {"messages": [ai], "pending_progress_message": None}
+    state = {"messages": [ai]}
 
     out = await tool_executor_node(
         state, {"cache_fetcher": _DummyTool(100)}, None, _RetryConfig()

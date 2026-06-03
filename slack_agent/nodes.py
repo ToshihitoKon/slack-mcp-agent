@@ -74,29 +74,6 @@ def _build_orchestrator_system(cache_references: list[CacheReference], extra_pro
     return prompt
 
 
-def _build_pending_message(response: AIMessage) -> str | None:
-    if not response.tool_calls:
-        return None
-    lines = []
-    # AIMessageのテキスト部分（思考・説明）があれば先に追加
-    content = response.content
-    def _quote(text: str) -> str:
-        return "\n".join(f"> _{line}_" for line in text.strip().splitlines())
-
-    if isinstance(content, str) and content.strip():
-        lines.append(_quote(content))
-    elif isinstance(content, list):
-        # content blocksの場合（anthropicなど）
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text" and block.get("text", "").strip():
-                lines.append(_quote(block["text"]))
-    # tool calls
-    for tc in response.tool_calls:
-        args_str = json.dumps(tc.get("args", {}), ensure_ascii=False)
-        lines.append(f"> _{tc['name']} {args_str}_")
-    return "\n".join(lines)
-
-
 async def orchestrator_node(
     state: AgentState,
     standard_llm: BaseChatModel,
@@ -129,30 +106,41 @@ async def orchestrator_node(
 
     return {
         "messages": [response],
-        "pending_progress_message": _build_pending_message(response),
     }
+
+
+def _task_title(tool_name: str, tool_args: dict) -> str:
+    """進捗タスクのタイトル。ツール名と引数を 1 行で表す。"""
+    args_str = json.dumps(tool_args, ensure_ascii=False)
+    return f"{tool_name} {args_str}"
 
 
 async def tool_executor_node(
     state: AgentState,
     tools_by_name: dict,
-    slack_notify_func,
+    progress_reporter,
     retry_config,
 ) -> dict:
+    from .progress import STATUS_COMPLETE, STATUS_IN_PROGRESS
+
     last_message = state["messages"][-1]
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
         return {}
-
-    # Send progress to Slack before executing tools
-    pending = state.get("pending_progress_message")
-    if pending and slack_notify_func:
-        await slack_notify_func(pending)
 
     tool_messages = []
     for tool_call in last_message.tool_calls:
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         tool_call_id = tool_call["id"]
+
+        # tool_call 1 件を 1 タスクとして進捗表示する (Issue #6)。
+        # task_id には tool_call_id を使う。
+        if progress_reporter:
+            await progress_reporter.update_task(
+                tool_call_id,
+                title=_task_title(tool_name, tool_args),
+                status=STATUS_IN_PROGRESS,
+            )
 
         tool_instance = tools_by_name.get(tool_name)
         if tool_instance is None:
@@ -162,7 +150,15 @@ async def tool_executor_node(
                     tool_call_id=tool_call_id,
                 )
             )
+            if progress_reporter:
+                await progress_reporter.update_task(
+                    tool_call_id,
+                    status=STATUS_COMPLETE,
+                    output=f"Tool '{tool_name}' not found.",
+                )
             continue
+
+        logger.info("Tool call start: tool=%s args=%r", tool_name, tool_args)
 
         async def _run_tool():
             return await tool_instance.ainvoke(tool_args)
@@ -184,6 +180,7 @@ async def tool_executor_node(
                 max_attempts=retry_config.max_attempts,
                 backoff_base=retry_config.backoff_base_seconds,
             )
+            logger.info("Tool call done: tool=%s result_size=%dB", tool_name, len(str(result).encode()))
             tool_messages.append(
                 ToolMessage(
                     content=str(result),
@@ -191,6 +188,10 @@ async def tool_executor_node(
                     additional_kwargs=cache_meta,
                 )
             )
+            if progress_reporter:
+                await progress_reporter.update_task(
+                    tool_call_id, status=STATUS_COMPLETE
+                )
         except Exception as exc:
             logger.error("Tool '%s' failed after retries: %s", tool_name, exc)
             tool_messages.append(
@@ -199,10 +200,15 @@ async def tool_executor_node(
                     tool_call_id=tool_call_id,
                 )
             )
+            if progress_reporter:
+                await progress_reporter.update_task(
+                    tool_call_id,
+                    status=STATUS_COMPLETE,
+                    output=f"failed: {exc}",
+                )
 
     return {
         "messages": tool_messages,
-        "pending_progress_message": None,
     }
 
 
