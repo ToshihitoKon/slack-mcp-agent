@@ -132,6 +132,17 @@ async def tool_executor_node(
         async def _run_tool():
             return await tool_instance.ainvoke(tool_args)
 
+        # tool 実行時に決定的な cache_key を生成し、ToolMessage に
+        # メタ情報として持たせる。compressor_node がこれを使ってキャッシュ保存する。
+        # cache_fetcher 自身の結果はキャッシュ対象外 (cache_key を付けない)。
+        cache_meta: dict[str, Any] = {}
+        if tool_name != "cache_fetcher":
+            cache_meta = {
+                "cache_key": CacheStore.make_key(tool_name, tool_args),
+                "cache_tool_name": tool_name,
+                "cache_tool_args": tool_args,
+            }
+
         try:
             result = await retry_async(
                 _run_tool,
@@ -139,7 +150,11 @@ async def tool_executor_node(
                 backoff_base=retry_config.backoff_base_seconds,
             )
             tool_messages.append(
-                ToolMessage(content=str(result), tool_call_id=tool_call_id)
+                ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call_id,
+                    additional_kwargs=cache_meta,
+                )
             )
         except Exception as exc:
             logger.error("Tool '%s' failed after retries: %s", tool_name, exc)
@@ -214,12 +229,14 @@ async def compressor_node(
 
         focused_summary = parsed.get("focused_summary", content[:500])
         content_index = parsed.get("content_index", "")
-        cache_key = parsed.get("cache_key")
 
-        # Save to cache if this came from an MCP tool (has a tool_call_id mapped to a real tool)
-        # For simplicity in the skeleton: save whenever cache_key is provided by compressor
-        # In full implementation: distinguish MCP vs cache_fetcher calls
-        if cache_key and content_index:
+        # cache_key は tool_executor_node が決定的に生成し ToolMessage の
+        # additional_kwargs に格納している。LLM 任せにしない。
+        meta = msg.additional_kwargs or {}
+        cache_key = meta.get("cache_key")
+
+        # MCP tool 由来 (cache_key 付き) の結果だけをキャッシュ保存する。
+        if cache_key:
             entry = CacheEntry(
                 cache_key=cache_key,
                 raw_result=content,
@@ -230,8 +247,8 @@ async def compressor_node(
             new_cache_refs.append(
                 CacheReference(
                     cache_key=cache_key,
-                    tool_name="",
-                    tool_args={},
+                    tool_name=meta.get("cache_tool_name", ""),
+                    tool_args=meta.get("cache_tool_args", {}),
                     content_index=content_index,
                 )
             )

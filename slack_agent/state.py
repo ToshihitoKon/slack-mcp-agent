@@ -13,7 +13,6 @@ class CacheReference(TypedDict):
 class CompressorResult(TypedDict):
     focused_summary: str
     content_index: str
-    cache_key: str | None
 
 
 class AgentState(TypedDict):

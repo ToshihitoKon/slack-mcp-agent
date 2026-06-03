@@ -20,9 +20,12 @@ def _expand_env_vars_in_config(mcp_config: dict) -> dict:
 
 async def load_mcp_tools(
     mcp_config_path: str = "mcp_config.json",
-    cache_store: CacheStore | None = None,
 ) -> list[BaseTool]:
-    """Load tools from all configured MCP servers."""
+    """Load tools from all configured MCP servers.
+
+    キャッシュ保存はツール実行レイヤー (tool_executor_node) と
+    compressor_node に集約しているため、ここでは cache_store を扱わない。
+    """
     raw = json.loads(Path(mcp_config_path).read_text())
     raw = _expand_env_vars_in_config(raw)
     servers: dict = raw.get("mcpServers", {})
