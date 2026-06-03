@@ -158,6 +158,8 @@ async def tool_executor_node(
                 )
             continue
 
+        logger.info("Tool call start: tool=%s args=%r", tool_name, tool_args)
+
         async def _run_tool():
             return await tool_instance.ainvoke(tool_args)
 
@@ -178,6 +180,7 @@ async def tool_executor_node(
                 max_attempts=retry_config.max_attempts,
                 backoff_base=retry_config.backoff_base_seconds,
             )
+            logger.info("Tool call done: tool=%s result_size=%dB", tool_name, len(str(result).encode()))
             tool_messages.append(
                 ToolMessage(
                     content=str(result),
