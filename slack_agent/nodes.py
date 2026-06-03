@@ -16,6 +16,14 @@ logger = logging.getLogger(__name__)
 _ORCHESTRATOR_SYSTEM_PROMPT = """\
 You are a helpful assistant with access to various tools.
 Answer the user's questions accurately. Use tools when needed.
+
+When you call one or more tools, first write a single short sentence (one line)
+in the user's language stating the purpose of what you are about to check or do
+(e.g. "ポストモーテムの進捗を確認します"). This sentence becomes the heading shown
+above the tool calls, so:
+- Write it only ONCE. Do not repeat or restate the same sentence.
+- Make it a purposeful sentence about your goal, not a restatement of the tool
+  name or its arguments.
 """
 
 _COMPRESSOR_SYSTEM_PROMPT = """\
@@ -109,8 +117,12 @@ async def orchestrator_node(
     }
 
 
-def _task_title(tool_name: str, tool_args: dict) -> str:
-    """進捗タスクのタイトル。ツール名と引数を 1 行で表す。"""
+def _tool_dump(tool_name: str, tool_args: dict) -> str:
+    """ツール呼び出しの dump。ツール名と引数を 1 行で表す。
+
+    Plan Block では「目的 (経緯)」を見出し (title) に、その目的のための
+    具体的な手段であるツール呼び出しを補足 (details) に置く。
+    """
     args_str = json.dumps(tool_args, ensure_ascii=False)
     return f"{tool_name} {args_str}"
 
@@ -127,19 +139,27 @@ async def tool_executor_node(
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
         return {}
 
+    # ツールを呼ぶ前のエージェントの思考テキスト (経緯)。これを Plan Block の
+    # 見出し (title) に出し、目的のための手段であるツール呼び出しの dump を
+    # 補足 (details) に置く。経緯は AIMessage 単位なので先頭タスクの title に使い、
+    # 後続タスクはツール名を title にする。
+    reasoning = str(last_message.content).strip() if last_message.content else ""
+
     tool_messages = []
-    for tool_call in last_message.tool_calls:
+    for idx, tool_call in enumerate(last_message.tool_calls):
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
         tool_call_id = tool_call["id"]
 
         # tool_call 1 件を 1 タスクとして進捗表示する (Issue #6)。
-        # task_id には tool_call_id を使う。
+        # title = 経緯 (先頭タスクのみ。無ければツール名)、details = ツール dump。
         if progress_reporter:
+            task_title = reasoning if (idx == 0 and reasoning) else tool_name
             await progress_reporter.update_task(
                 tool_call_id,
-                title=_task_title(tool_name, tool_args),
+                title=task_title,
                 status=STATUS_IN_PROGRESS,
+                details=_tool_dump(tool_name, tool_args),
             )
 
         tool_instance = tools_by_name.get(tool_name)

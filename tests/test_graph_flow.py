@@ -248,8 +248,8 @@ class _RecordingReporter:
     def __init__(self):
         self.events: list[tuple] = []
 
-    async def update_task(self, task_id, *, title=None, status="in_progress", output=None):
-        self.events.append((task_id, title, status))
+    async def update_task(self, task_id, *, title=None, status="in_progress", output=None, details=None):
+        self.events.append((task_id, title, status, details))
 
     async def finish(self):
         pass
@@ -272,11 +272,46 @@ async def test_progress_reporter_receives_task_transitions():
     )
 
     # tc1 が in_progress → complete と遷移する
-    statuses = [(tid, st) for tid, _title, st in reporter.events]
+    statuses = [(tid, st) for tid, _title, st, _details in reporter.events]
     assert ("tc1", "in_progress") in statuses
     assert ("tc1", "complete") in statuses
     # in_progress が complete より先
     assert statuses.index(("tc1", "in_progress")) < statuses.index(("tc1", "complete"))
-    # in_progress 時に title が付く
+    # 経緯テキストが無い場合、title はツール名にフォールバックする
     in_progress = [e for e in reporter.events if e[2] == "in_progress"][0]
-    assert "srv__search" in in_progress[1]
+    assert in_progress[1] == "srv__search"
+
+
+@pytest.mark.asyncio
+async def test_progress_reporter_reasoning_in_title_dump_in_details():
+    """経緯は先頭タスクの title (見出し)、ツール dump は各タスクの details に出る。"""
+    responses = [
+        AIMessage(
+            content="進捗を確認します",
+            tool_calls=[
+                {"name": "srv__search", "args": {"q": "a"}, "id": "tc1"},
+                {"name": "srv__search", "args": {"q": "b"}, "id": "tc2"},
+            ],
+        ),
+        AIMessage(content="done"),
+    ]
+    tools = {"srv__search": _FakeTool("small")}
+    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+
+    reporter = _RecordingReporter()
+    await graph.ainvoke(
+        _initial_state("search"),
+        config={"configurable": {"progress_reporter": reporter}},
+    )
+
+    in_progress = {
+        tid: (title, details)
+        for tid, title, st, details in reporter.events
+        if st == "in_progress"
+    }
+    # 先頭タスク (tc1) の title に経緯、後続 (tc2) はツール名
+    assert in_progress["tc1"][0] == "進捗を確認します"
+    assert in_progress["tc2"][0] == "srv__search"
+    # ツール dump は各タスクの details に入る (引数を含む)
+    assert in_progress["tc1"][1] == 'srv__search {"q": "a"}'
+    assert in_progress["tc2"][1] == 'srv__search {"q": "b"}'

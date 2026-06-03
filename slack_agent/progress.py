@@ -57,6 +57,7 @@ class ProgressReporter(ABC):
         title: str | None = None,
         status: str = STATUS_IN_PROGRESS,
         output: str | None = None,
+        details: str | None = None,
     ) -> None:
         ...
 
@@ -88,6 +89,9 @@ class PlanBlockReporter(ProgressReporter):
         self._stream_ts: str | None = None
         # task_id -> title を保持し、status 更新時に title を再送できるようにする
         self._titles: dict[str, str] = {}
+        # details (ツール dump) を送信済みの task_id。Slack 側で追記される
+        # ため、二重送信を防ぐ「送ったか」の記録として使う。
+        self._details: dict[str, str] = {}
 
     async def start(self) -> None:
         kwargs: dict = {
@@ -109,18 +113,25 @@ class PlanBlockReporter(ProgressReporter):
         title: str | None = None,
         status: str = STATUS_IN_PROGRESS,
         output: str | None = None,
+        details: str | None = None,
     ) -> None:
         if title is not None:
             self._titles[task_id] = title
         # chat.appendStream の task chunk スキーマ:
         #   type="task_update", id, title, status, (details/output/sources)
-        # title/output は 256 文字制限。
+        # title/output/details は 256 文字制限。
         chunk: dict = {
             "type": "task_update",
             "id": task_id,
             "title": _truncate(self._titles.get(task_id, task_id)),
             "status": status,
         }
+        # details は Slack 側で同一 task_id に追記 (append) される。同じ
+        # status 遷移 (in_progress -> complete) で 2 回送ると dump が二重に
+        # 表示されるため、各 task_id につき 1 度だけ送る。
+        if details is not None and task_id not in self._details:
+            self._details[task_id] = details
+            chunk["details"] = _truncate(details)
         if output is not None:
             chunk["output"] = _truncate(output)
         await self._client.chat_appendStream(
@@ -170,6 +181,10 @@ class TextProgressReporter(ProgressReporter):
             task = self._tasks[task_id]
             icon = self._STATUS_ICON.get(task["status"], "•")
             text = task.get("title") or task_id
+            # ツール呼び出し前のエージェント思考はタスク行の前に出す。
+            details = task.get("details")
+            if details:
+                lines.append(f"> {details}")
             lines.append(f"> {icon} _{text}_")
             output = task.get("output")
             if output:
@@ -183,6 +198,7 @@ class TextProgressReporter(ProgressReporter):
         title: str | None = None,
         status: str = STATUS_IN_PROGRESS,
         output: str | None = None,
+        details: str | None = None,
     ) -> None:
         if task_id not in self._tasks:
             self._order.append(task_id)
@@ -193,6 +209,8 @@ class TextProgressReporter(ProgressReporter):
         task["status"] = status
         if output is not None:
             task["output"] = output
+        if details is not None:
+            task["details"] = details
 
         combined = self._render()
         if self._message_ts is None:
@@ -247,6 +265,7 @@ class LazyReporter(ProgressReporter):
         title: str | None = None,
         status: str = STATUS_IN_PROGRESS,
         output: str | None = None,
+        details: str | None = None,
     ) -> None:
         # 進捗表示はベストエフォート。Slack 側のスキーマ/権限エラーで
         # エージェント本体の処理を止めない。
@@ -261,7 +280,7 @@ class LazyReporter(ProgressReporter):
                     recipient_user_id=self._recipient_user_id,
                 )
             await self._inner.update_task(
-                task_id, title=title, status=status, output=output
+                task_id, title=title, status=status, output=output, details=details
             )
         except Exception as exc:
             logger.warning("Progress update failed (ignored): %s", exc)
