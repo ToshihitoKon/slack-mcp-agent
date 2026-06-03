@@ -111,14 +111,14 @@ async def test_plan_block_appends_task_chunks_and_status_transition():
 
     chunk1 = appends[0]["chunks"][0]
     assert chunk1 == {
-        "type": "task",
+        "type": "task_update",
         "id": "t1",
-        "text": "Search workspace",
+        "title": "Search workspace",
         "status": STATUS_IN_PROGRESS,
     }
     # status 更新時も title は保持される
     chunk2 = appends[1]["chunks"][0]
-    assert chunk2["text"] == "Search workspace"
+    assert chunk2["title"] == "Search workspace"
     assert chunk2["status"] == STATUS_COMPLETE
 
 
@@ -131,6 +131,20 @@ async def test_plan_block_includes_output_when_given():
 
     chunk = client.calls[-1][1]["chunks"][0]
     assert chunk["output"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_plan_block_truncates_long_title_and_output():
+    """title / output は 256 文字に切り詰められる。"""
+    client = _RecordingClient()
+    reporter = PlanBlockReporter(client, "C1", "100")
+    await reporter.start()
+    long = "x" * 400
+    await reporter.update_task("t1", title=long, status=STATUS_COMPLETE, output=long)
+
+    chunk = client.calls[-1][1]["chunks"][0]
+    assert len(chunk["title"]) == 256
+    assert len(chunk["output"]) == 256
 
 
 @pytest.mark.asyncio
@@ -230,6 +244,33 @@ async def test_lazy_reporter_forwards_recipient_ids_to_plan_block():
     assert start_calls
     assert start_calls[0]["recipient_team_id"] == "T1"
     assert start_calls[0]["recipient_user_id"] == "U1"
+
+
+@pytest.mark.asyncio
+async def test_lazy_reporter_swallows_errors():
+    """進捗表示の失敗 (Slack エラー) は握りつぶし、本処理を止めない。"""
+
+    class _BrokenClient:
+        async def chat_startStream(self, **kwargs):
+            return {"ts": "stream-1"}
+
+        async def chat_appendStream(self, **kwargs):
+            raise RuntimeError("invalid_arguments")
+
+        async def chat_stopStream(self, **kwargs):
+            return {"ok": True}
+
+        async def chat_postMessage(self, **kwargs):
+            return {"ts": "m1"}
+
+        async def chat_update(self, **kwargs):
+            return {"ok": True}
+
+    reporter = LazyReporter(_BrokenClient(), "C1", "100", mode="plan")
+    await reporter.start()
+    # 例外が外に伝播しないこと
+    await reporter.update_task("t1", title="x", status=STATUS_IN_PROGRESS)
+    await reporter.finish()
 
 
 @pytest.mark.asyncio

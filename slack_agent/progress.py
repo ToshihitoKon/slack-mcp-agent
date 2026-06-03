@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 STATUS_PENDING = "pending"
 STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETE = "complete"
+STATUS_ERROR = "error"
+
+# task_update chunk の title / output は 256 文字制限がある
+_PLAN_TEXT_LIMIT = 256
+
+
+def _truncate(text: str | None) -> str | None:
+    if text is None:
+        return None
+    if len(text) <= _PLAN_TEXT_LIMIT:
+        return text
+    return text[: _PLAN_TEXT_LIMIT - 1] + "…"
 
 
 class ProgressReporter(ABC):
@@ -100,14 +112,17 @@ class PlanBlockReporter(ProgressReporter):
     ) -> None:
         if title is not None:
             self._titles[task_id] = title
-        chunk = {
-            "type": "task",
+        # chat.appendStream の task chunk スキーマ:
+        #   type="task_update", id, title, status, (details/output/sources)
+        # title/output は 256 文字制限。
+        chunk: dict = {
+            "type": "task_update",
             "id": task_id,
-            "text": self._titles.get(task_id, task_id),
+            "title": _truncate(self._titles.get(task_id, task_id)),
             "status": status,
         }
         if output is not None:
-            chunk["output"] = output
+            chunk["output"] = _truncate(output)
         await self._client.chat_appendStream(
             channel=self._channel,
             ts=self._stream_ts,
@@ -233,22 +248,30 @@ class LazyReporter(ProgressReporter):
         status: str = STATUS_IN_PROGRESS,
         output: str | None = None,
     ) -> None:
-        if self._inner is None:
-            self._inner = await create_reporter(
-                self._client,
-                self._channel,
-                self._thread_ts,
-                self._mode,
-                recipient_team_id=self._recipient_team_id,
-                recipient_user_id=self._recipient_user_id,
+        # 進捗表示はベストエフォート。Slack 側のスキーマ/権限エラーで
+        # エージェント本体の処理を止めない。
+        try:
+            if self._inner is None:
+                self._inner = await create_reporter(
+                    self._client,
+                    self._channel,
+                    self._thread_ts,
+                    self._mode,
+                    recipient_team_id=self._recipient_team_id,
+                    recipient_user_id=self._recipient_user_id,
+                )
+            await self._inner.update_task(
+                task_id, title=title, status=status, output=output
             )
-        await self._inner.update_task(
-            task_id, title=title, status=status, output=output
-        )
+        except Exception as exc:
+            logger.warning("Progress update failed (ignored): %s", exc)
 
     async def finish(self) -> None:
         if self._inner is not None:
-            await self._inner.finish()
+            try:
+                await self._inner.finish()
+            except Exception as exc:
+                logger.warning("Progress finish failed (ignored): %s", exc)
 
 
 async def create_reporter(
