@@ -19,7 +19,8 @@
   },
   "agent": {
     "compression_threshold_bytes": 10000,
-    "recursion_limit": 25
+    "recursion_limit": 25,
+    "progress_mode": "auto"
   },
   "storage": {
     "type": "memory"

@@ -7,6 +7,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from .config import AppConfig
+from .progress import LazyReporter
 from .state import AgentState
 from .thread_history import fetch_new_replies
 
@@ -143,26 +144,11 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
         for i, m in enumerate(new_replies):
             logger.info("  new_replies[%d]: %r", i, str(m.content)[:80])
 
-        # 進捗メッセージ: 1件のみ投稿し、推論ステップを追記しながら更新
-        progress_ts: list[str] = []
-        progress_lines: list[str] = []
-
-        async def slack_notify(message: str):
-            progress_lines.append(message)
-            combined = "\n".join(progress_lines)
-            if not progress_ts:
-                result = await client.chat_postMessage(
-                    channel=channel,
-                    thread_ts=thread_ts,
-                    text=combined,
-                )
-                progress_ts.append(result["ts"])
-            else:
-                await client.chat_update(
-                    channel=channel,
-                    ts=progress_ts[0],
-                    text=combined,
-                )
+        # 進捗表示: Plan Block (対応環境) またはテキストにフォールバック (Issue #6)。
+        # 初回タスクまで実際の投稿は遅延される。
+        progress_reporter = LazyReporter(
+            client, channel, thread_ts, mode=agent_config.progress_mode
+        )
 
         current_human = HumanMessage(content=text)
         # last_bot_response_ts は initial_state に含めない (既存値を維持)
@@ -170,7 +156,6 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
             "messages": new_replies + [current_human],
             "compression_threshold": agent_config.compression_threshold_bytes,
             "cache_references": [],
-            "pending_progress_message": None,
         }
 
         try:
@@ -179,7 +164,7 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
                 config={
                     "recursion_limit": agent_config.recursion_limit,
                     "configurable": {
-                        "slack_notify": slack_notify,
+                        "progress_reporter": progress_reporter,
                         "thread_id": thread_ts,
                     },
                 },
@@ -189,6 +174,11 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
         except Exception as exc:
             logger.exception("Agent failed: %s", exc)
             answer = _ERROR_MESSAGE
+        finally:
+            try:
+                await progress_reporter.finish()
+            except Exception as exc:
+                logger.warning("Failed to finish progress reporter: %s", exc)
 
         # 最終回答は別メッセージとして投稿（進捗メッセージとは別スレッド返信）
         result = await client.chat_postMessage(

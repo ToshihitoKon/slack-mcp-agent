@@ -59,6 +59,8 @@ class CacheConfig:
 class AgentConfig:
     compression_threshold_bytes: int
     recursion_limit: int
+    # 進捗表示モード: "auto" (Plan Block を試し失敗で text) / "plan" / "text"
+    progress_mode: str
 
 
 @dataclass
@@ -111,6 +113,7 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
     agent = AgentConfig(
         compression_threshold_bytes=agent_raw.get("compression_threshold_bytes", 10000),
         recursion_limit=agent_raw.get("recursion_limit", 25),
+        progress_mode=agent_raw.get("progress_mode", "auto"),
     )
 
     storage_raw = raw.get("storage", {"type": "memory"})

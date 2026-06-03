@@ -7,7 +7,7 @@ LangGraph で実装した Slack 向けエージェント。ユーザーの入力
 - **MCP ツール連携** — `mcp_config.json` に定義した stdio MCP サーバーのツールを LangGraph のツールとして自動ロードする。
 - **ツール結果の圧縮とキャッシュ** — 大きなツール結果は軽量モデルで要約し、生の結果はキャッシュに退避する。後続のやり取りでは `cache_fetcher` ツールで生の結果を取り出せる。
 - **スレッド単位の会話履歴** — Slack の `thread_ts` を LangGraph の `thread_id` として扱い、checkpointer で会話履歴を永続化する。
-- **進捗メッセージ** — ツール実行前に思考とツール呼び出しを Slack スレッドへ逐次通知する。
+- **進捗表示** — ツール実行を Slack の Plan Block（`chat.startStream` ベースの構造化タスク表示）で逐次通知する。Plan Block 非対応の環境では自動でテキスト表示にフォールバックする。
 - **リトライ** — ツール呼び出し・LLM 呼び出しを指数バックオフでリトライする（5xx はリトライ、4xx はリトライしない）。
 
 ## アーキテクチャ
@@ -79,7 +79,7 @@ uv sync --extra ollama      # Ollama
   },
   "retry": { "max_attempts": 3, "backoff_base_seconds": 1.0 },
   "cache": { "ttl_hours": 6 },
-  "agent": { "compression_threshold_bytes": 10000, "recursion_limit": 25 },
+  "agent": { "compression_threshold_bytes": 10000, "recursion_limit": 25, "progress_mode": "auto" },
   "storage": { "type": "memory" }
 }
 ```
@@ -94,6 +94,7 @@ uv sync --extra ollama      # Ollama
 | `cache.ttl_hours` | キャッシュエントリの有効期限（時間） |
 | `agent.compression_threshold_bytes` | ToolMessage を圧縮する閾値（バイト） |
 | `agent.recursion_limit` | LangGraph の再帰上限 |
+| `agent.progress_mode` | 進捗表示モード。`auto`（Plan Block を試し失敗で text にフォールバック）/ `plan` / `text` |
 | `storage.type` | checkpointer のバックエンド。現状は `memory` のみ対応 |
 
 ### `mcp_config.json`
