@@ -7,7 +7,6 @@
   こと (Issue #6 の再起動レース対策)。
 """
 
-import asyncio
 from datetime import timedelta
 
 import pytest
@@ -46,7 +45,7 @@ class _FakeSession:
 def _make_tool(mcp_tool=None, session=None, timeout=None):
     session = session or _FakeSession()
     tool = _make_langchain_tool(
-        "srv", mcp_tool or _FakeMcpTool(), session, asyncio.Lock(), timeout
+        "srv", mcp_tool or _FakeMcpTool(), session, timeout
     )
     return tool, session
 
@@ -86,3 +85,36 @@ async def test_tool_reuses_same_session_across_calls():
     # 同一セッションに 2 回 call_tool されている (再接続していない)
     assert len(session.calls) == 2
     assert [c["arguments"] for c in session.calls] == [{"q": "a"}, {"q": "b"}]
+
+
+@pytest.mark.asyncio
+async def test_calls_are_not_serialized_so_a_hang_does_not_block_others():
+    """1 本がハングしても後続ツールが巻き添えにならない (直列化していない)。
+
+    同一セッションを共有する 2 ツールで、遅い方を並行起動しても速い方が
+    先に完了することを確認する。lock で直列化していると速い方も待たされる。
+    """
+    import asyncio
+
+    completed: list[str] = []
+
+    class _SlowSession:
+        async def call_tool(self, name, arguments=None, read_timeout_seconds=None, **kw):
+            if arguments.get("slow"):
+                await asyncio.sleep(0.1)
+                completed.append("slow")
+            else:
+                completed.append("fast")
+            return _FakeResult()
+
+    session = _SlowSession()
+    slow = _make_langchain_tool("srv", _FakeMcpTool(name="a"), session, None)
+    fast = _make_langchain_tool("srv", _FakeMcpTool(name="b"), session, None)
+
+    await asyncio.gather(
+        slow.ainvoke({"slow": True}),
+        fast.ainvoke({"slow": False}),
+    )
+
+    # 直列化されていなければ fast が slow より先に完了する
+    assert completed == ["fast", "slow"]

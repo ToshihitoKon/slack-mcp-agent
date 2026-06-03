@@ -43,6 +43,34 @@ def test_should_retry_plain_exception_is_retryable():
     assert _should_retry_exception(ValueError("boom")) is True
 
 
+# クラス名で判定されるため、実物の mcp SDK と同じ "McpError" にする。
+class McpError(Exception):
+    """mcp SDK の McpError を模した例外 (クラス名で非リトライ判定される)。"""
+
+
+def test_should_retry_mcp_error_is_not_retryable():
+    """MCP タイムアウト (McpError) は再試行しても無駄なので非リトライ。"""
+    assert _should_retry_exception(McpError("Timed out ... Waited 60.0 seconds.")) is False
+
+
+def test_should_retry_timeout_error_is_not_retryable():
+    assert _should_retry_exception(TimeoutError("timed out")) is False
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_retry_mcp_timeout():
+    """McpError は 1 回で即座に失敗し、リトライで時間を浪費しない。"""
+    calls = []
+
+    async def func():
+        calls.append(1)
+        raise McpError("Timed out while waiting for response to ClientRequest. Waited 60.0 seconds.")
+
+    with pytest.raises(McpError):
+        await retry_async(func, max_attempts=3, backoff_base=0)
+    assert len(calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_retry_returns_on_success():
     calls = []

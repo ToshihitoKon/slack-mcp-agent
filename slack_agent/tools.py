@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 from contextlib import AsyncExitStack
@@ -78,14 +77,12 @@ async def _connect_server(
     read, write = await exit_stack.enter_async_context(stdio_client(params))
     session = await exit_stack.enter_async_context(ClientSession(read, write))
     await session.initialize()
-    # 同一セッションへの call_tool を直列化する (stdio ストリームへの並行アクセス回避)。
-    lock = asyncio.Lock()
 
     result = await session.list_tools()
     tools: list[BaseTool] = []
     for mcp_tool in result.tools:
         lc_tool = _make_langchain_tool(
-            server_name, mcp_tool, session, lock, tool_timeout_seconds
+            server_name, mcp_tool, session, tool_timeout_seconds
         )
         tools.append(lc_tool)
     logger.info("Connected to MCP server '%s' (%d tools)", server_name, len(tools))
@@ -96,7 +93,6 @@ def _make_langchain_tool(
     server_name: str,
     mcp_tool,
     session: ClientSession,
-    lock: asyncio.Lock,
     tool_timeout_seconds: float | None = None,
 ) -> BaseTool:
     """Wrap a single MCP tool as a LangChain BaseTool backed by a shared session."""
@@ -112,12 +108,14 @@ def _make_langchain_tool(
 
     async def _arun(**kwargs: Any) -> str:
         # 保持済みセッションを使い回す。毎回サーバーを起動し直さない。
-        async with lock:
-            result = await session.call_tool(
-                mcp_tool.name,
-                arguments=kwargs,
-                read_timeout_seconds=read_timeout,
-            )
+        # call_tool は直列化しない: ClientSession は request_id ごとに応答 stream を
+        # 多重化するため並行呼び出しに対応している。直列化すると 1 本のハング
+        # (esa の重いクエリ等) が後続の全ツールを巻き添えにする (連鎖タイムアウト)。
+        result = await session.call_tool(
+            mcp_tool.name,
+            arguments=kwargs,
+            read_timeout_seconds=read_timeout,
+        )
         return str(result.content)
 
     return StructuredTool(

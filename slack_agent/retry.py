@@ -9,12 +9,21 @@ T = TypeVar("T")
 # HTTP status codes that should not be retried
 _NO_RETRY_STATUS_CODES = frozenset(range(400, 500))
 
+# リトライしても無駄なタイムアウト系の例外クラス名。
+# MCP ツールの応答待ちタイムアウト (McpError "Timed out ... Waited N seconds") は
+# 同じ呼び出しを再試行しても同じ時間待たされるだけで、サーバ側が無応答な限り
+# 成功しない。リトライ対象外にしてロック占有と待ち時間を減らす。
+_NO_RETRY_EXC_NAMES = frozenset({"McpError", "TimeoutError"})
+
 
 def _should_retry_exception(exc: Exception) -> bool:
     """Return True if the exception is retryable."""
     # Check for HTTP status in exception attributes (httpx, aiohttp, requests style)
     status_code = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if status_code is not None and status_code in _NO_RETRY_STATUS_CODES:
+        return False
+    # タイムアウト系は再試行しても無駄なので即座に失敗させる。
+    if type(exc).__name__ in _NO_RETRY_EXC_NAMES:
         return False
     return True
 
