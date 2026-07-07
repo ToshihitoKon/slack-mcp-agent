@@ -90,12 +90,41 @@ uv sync --extra ollama      # Ollama
 | `slack.allowed_user_ids` | 応答を許可するユーザー ID。空配列なら全員許可 |
 | `models.provider` | LLM プロバイダ（`openai` / `anthropic` / `bedrock` / `ollama` など） |
 | `models.standard` / `models.light` | orchestrator 用 / compressor 用のモデル名 |
+| `models.options` | `init_chat_model` にそのまま渡す追加パラメータ（プロバイダ固有） |
 | `retry` | リトライ回数とバックオフ基準秒数 |
 | `cache.ttl_hours` | キャッシュエントリの有効期限（時間） |
 | `agent.compression_threshold_bytes` | ToolMessage を圧縮する閾値（バイト） |
 | `agent.recursion_limit` | LangGraph の再帰上限 |
 | `agent.progress_mode` | 進捗表示モード。`auto`（Plan Block を試し失敗で text にフォールバック）/ `plan` / `text` |
 | `storage.type` | checkpointer のバックエンド。現状は `memory` のみ対応 |
+
+#### Anthropic のモデル（Bedrock 経由含む）を使う場合
+
+このアプリは応答の content block を `str(message.content)` で単純にテキスト化している
+（[`slack_agent/nodes.py`](slack_agent/nodes.py) / [`slack_agent/slack_handler.py`](slack_agent/slack_handler.py)）。
+拡張思考 (thinking) を返すモデルは content が `[{"type": "thinking", ...}, {"type": "text", "text": "..."}]`
+のような list になり、この単純な `str()` では thinking の signature を含む Python の repr が
+そのまま出力されてしまう。Claude Sonnet 5 のような拡張思考対応モデルは `options` を空にしていても
+デフォルトで thinking を返すため、明示的に無効化する必要がある。
+
+`models.provider` に `bedrock` を指定すると `langchain.chat_models.init_chat_model` は
+Bedrock **Invoke API** を使うレガシークラス（`langchain_aws.chat_models.ChatBedrock`）を解決する
+（Bedrock **Converse API** 用の `ChatBedrockConverse` ではない）。そのため Converse API 向けの
+`additional_model_request_fields` はここでは効かず、`ValidationException: additional_model_request_fields:
+Extra inputs are not permitted` になる。`model_kwargs` 経由でリクエストボディに直接 `thinking` を
+渡すこと。
+
+```json
+"models": {
+  "provider": "bedrock",
+  "standard": "global.anthropic.claude-sonnet-5",
+  "options": {
+    "model_kwargs": {
+      "thinking": {"type": "disabled"}
+    }
+  }
+}
+```
 
 ### `mcp_config.json`
 
