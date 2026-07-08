@@ -60,6 +60,14 @@ uv sync --extra ollama      # Ollama
 
 ## 設定
 
+`settings.json` / `mcp_config.json` / `prompt.md` は Git 管理外（実運用の値を含むため）。リポジトリにはサンプルがあるので、コピーして編集する。
+
+```bash
+cp settings_sample.json settings.json
+cp mcp_config_sample.json mcp_config.json
+cp prompt_sample.md prompt.md   # 任意
+```
+
 ### `settings.json`
 
 アプリ全体の設定。`${VAR}` / `${VAR:-default}` 形式で環境変数を展開できる。
@@ -192,11 +200,11 @@ uv run --extra dev pytest -q
 
 ```
 .
-├── main.py          # エントリポイント（CLI 引数・ドライラン・起動）
-├── settings.json    # アプリ設定
-├── mcp_config.json  # MCP サーバー定義
-├── prompt.md        # orchestrator への追加システムプロンプト（任意）
+├── main.py                 # エントリポイント（CLI 引数・ドライラン・起動）
+├── settings_sample.json    # アプリ設定のサンプル（settings.json にコピーして使う）
+├── mcp_config_sample.json  # MCP サーバー定義のサンプル（mcp_config.json にコピーして使う）
+├── prompt_sample.md        # orchestrator への追加システムプロンプトのサンプル（任意）
 ├── Dockerfile
-├── slack_agent/     # エージェント本体（ノード・グラフ・ツール・設定など）
-└── tests/           # テスト（tests/README.md 参照）
+├── slack_agent/            # エージェント本体（ノード・グラフ・ツール・設定など）
+└── tests/                  # テスト（tests/README.md 参照）
 ```
