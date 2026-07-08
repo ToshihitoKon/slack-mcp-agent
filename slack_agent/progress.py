@@ -23,6 +23,12 @@ STATUS_IN_PROGRESS = "in_progress"
 STATUS_COMPLETE = "complete"
 STATUS_ERROR = "error"
 
+# 応答生成全体を表す最上位タスク。ツール呼び出しタスクが全て complete に
+# なった瞬間、これが無いと Plan Block 全体が complete 扱いになり見出しの
+# 表示が完了扱いになってしまう。最初に追加するタスクとして起動時に
+# in_progress にし、最終回答が確定したときだけ complete にする。
+RESPONDING_TASK_ID = "__responding__"
+
 # task_update chunk の title / output は 256 文字制限がある
 _PLAN_TEXT_LIMIT = 256
 
@@ -233,10 +239,7 @@ class TextProgressReporter(ProgressReporter):
 
 
 class LazyReporter(ProgressReporter):
-    """初回の update_task まで実際の reporter 生成 (= Slack 投稿) を遅延する。
-
-    tool_call が無く即答するケースで空のストリーム/メッセージを作らないため。
-    """
+    """初回の update_task まで実際の reporter 生成 (= Slack 投稿) を遅延する。"""
 
     def __init__(
         self,
