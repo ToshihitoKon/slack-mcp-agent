@@ -109,7 +109,9 @@ class PlanBlockReporter(ProgressReporter):
             kwargs["recipient_team_id"] = self._recipient_team_id
         if self._recipient_user_id is not None:
             kwargs["recipient_user_id"] = self._recipient_user_id
+        logger.debug("chat.startStream request kwargs=%r", kwargs)
         result = await self._client.chat_startStream(**kwargs)
+        logger.debug("chat.startStream response=%r", result)
         self._stream_ts = result["ts"]
 
     async def update_task(
@@ -140,11 +142,13 @@ class PlanBlockReporter(ProgressReporter):
             chunk["details"] = _truncate(details)
         if output is not None:
             chunk["output"] = _truncate(output)
-        await self._client.chat_appendStream(
+        logger.debug("chat.appendStream request chunk=%r", chunk)
+        result = await self._client.chat_appendStream(
             channel=self._channel,
             ts=self._stream_ts,
             chunks=[chunk],
         )
+        logger.debug("chat.appendStream response=%r", result)
 
     async def finish(self) -> None:
         if self._stream_ts is None:

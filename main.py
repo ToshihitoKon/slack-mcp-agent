@@ -23,6 +23,11 @@ if os.environ.get("DEBUG_LLM"):
 else:
     logging.basicConfig(level=logging.INFO)
 
+# DEBUG_PROGRESS=1 で Plan Block の chat.startStream/appendStream リクエスト・
+# レスポンスだけを DEBUG 出力する (LLM 入出力を巻き込まず調査したい場合用)。
+if os.environ.get("DEBUG_PROGRESS"):
+    logging.getLogger("slack_agent.progress").setLevel(logging.DEBUG)
+
 logger = logging.getLogger(__name__)
 
 
