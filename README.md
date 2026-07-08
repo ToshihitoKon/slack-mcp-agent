@@ -1,40 +1,30 @@
 # slack-mcp-agent
 
-LangGraph で実装した Slack 向けエージェント。ユーザーの入力に応じて MCP ツールを呼び出し、ツール結果を必要に応じて圧縮・キャッシュしながら回答を生成する。Slack の DM とメンションに反応する。
+LangGraph で実装した Slack 向けエージェント。ユーザーの入力に応じて MCP ツールを呼び出して回答を生成する。Slack の DM とメンションに反応する。
 
 ## 特徴
 
 - **MCP ツール連携** — `mcp_config.json` に定義した stdio MCP サーバーのツールを LangGraph のツールとして自動ロードする。
-- **ツール結果の圧縮とキャッシュ** — 大きなツール結果は軽量モデルで要約し、生の結果はキャッシュに退避する。後続のやり取りでは `cache_fetcher` ツールで生の結果を取り出せる。
 - **スレッド単位の会話履歴** — Slack の `thread_ts` を LangGraph の `thread_id` として扱い、checkpointer で会話履歴を永続化する。
 - **進捗表示** — ツール実行を Slack の Plan Block（`chat.startStream` ベースの構造化タスク表示）で逐次通知する。Plan Block 非対応の環境では自動でテキスト表示にフォールバックする。
 - **リトライ** — ツール呼び出し・LLM 呼び出しを指数バックオフでリトライする（5xx はリトライ、4xx はリトライしない）。
 
 ## アーキテクチャ
 
-LangGraph の 3 ノードで構成される。
+LangGraph の 2 ノードで構成される。
 
 | ノード | 役割 |
 |---|---|
 | `orchestrator` | 標準モデル。思考・ツール呼び出し判断・最終回答生成 |
-| `tool_executor` | MCP ツールまたはビルトインツール（`cache_fetcher`）を実行 |
-| `compressor` | ToolMessage のサイズ判定・軽量モデルで圧縮・キャッシュ保存 |
+| `tool_executor` | MCP ツールを実行 |
 
 ### グラフ遷移
 
 ```
 orchestrator ──→ END                          # tool_calls なし
      │
-     └──→ tool_executor ──→ compressor ──→ orchestrator   # 直近 ToolMessage が閾値超え
-                    │
-                    └──────────────────→ orchestrator     # 閾値未満
+     └──→ tool_executor ──→ orchestrator
 ```
-
-### キャッシュの流れ
-
-1. `tool_executor` がツール実行時に `cache_key`（`tool_name` + 引数のハッシュ）を決定的に生成し、ToolMessage のメタ情報に格納する。
-2. `compressor` が閾値超えの ToolMessage を要約に置換しつつ、生の結果を `cache_key` でキャッシュへ保存し、`cache_references` に登録する。
-3. `orchestrator` は `cache_references` をシステムプロンプトに差し込み、必要なら `cache_fetcher` ツールで生の結果を取り出す。
 
 ## セットアップ
 
@@ -82,12 +72,10 @@ cp prompt_sample.md prompt.md   # 任意
   "models": {
     "provider": "openai",
     "standard": "gpt-5-nano-2025-08-07",
-    "light": "gpt-5-nano-2025-08-07",
     "options": {}
   },
   "retry": { "max_attempts": 3, "backoff_base_seconds": 1.0 },
-  "cache": { "ttl_hours": 6 },
-  "agent": { "compression_threshold_bytes": 10000, "recursion_limit": 25, "progress_mode": "auto" },
+  "agent": { "recursion_limit": 25, "progress_mode": "auto" },
   "storage": { "type": "memory" }
 }
 ```
@@ -97,11 +85,9 @@ cp prompt_sample.md prompt.md   # 任意
 | `slack.bot_token` / `slack.app_token` | Slack Bot Token / App-Level Token（Socket Mode 用） |
 | `slack.allowed_user_ids` | 応答を許可するユーザー ID。空配列なら全員許可 |
 | `models.provider` | LLM プロバイダ（`openai` / `anthropic` / `bedrock` / `ollama` など） |
-| `models.standard` / `models.light` | orchestrator 用 / compressor 用のモデル名 |
+| `models.standard` | orchestrator 用のモデル名 |
 | `models.options` | `init_chat_model` にそのまま渡す追加パラメータ（プロバイダ固有） |
 | `retry` | リトライ回数とバックオフ基準秒数 |
-| `cache.ttl_hours` | キャッシュエントリの有効期限（時間） |
-| `agent.compression_threshold_bytes` | ToolMessage を圧縮する閾値（バイト） |
 | `agent.recursion_limit` | LangGraph の再帰上限 |
 | `agent.progress_mode` | 進捗表示モード。`auto`（Plan Block を試し失敗で text にフォールバック）/ `plan` / `text` |
 | `storage.type` | checkpointer のバックエンド。現状は `memory` のみ対応 |
