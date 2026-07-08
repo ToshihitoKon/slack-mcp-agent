@@ -1,29 +1,15 @@
 import logging
-from typing import Callable
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, StateGraph
 
-from .cache import CacheStore
 from .config import AppConfig
-from .nodes import compressor_node, orchestrator_node, tool_executor_node
+from .nodes import orchestrator_node, tool_executor_node
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
-
-
-def _should_compress(state: AgentState) -> str:
-    threshold = state.get("compression_threshold", 10000)
-    messages = state["messages"]
-    for msg in reversed(messages):
-        if isinstance(msg, ToolMessage):
-            if len(str(msg.content).encode()) > threshold:
-                return "compressor"
-            break
-    return "orchestrator"
 
 
 def _after_orchestrator(state: AgentState) -> str:
@@ -36,9 +22,7 @@ def _after_orchestrator(state: AgentState) -> str:
 def build_graph(
     config: AppConfig,
     standard_llm: BaseChatModel,
-    light_llm: BaseChatModel,
     tools_by_name: dict,
-    cache_store: CacheStore,
     extra_prompt: str = "",
     checkpointer: BaseCheckpointSaver | None = None,
 ):
@@ -53,14 +37,8 @@ def build_graph(
         progress_reporter = rconfig.get("configurable", {}).get("progress_reporter")
         return await tool_executor_node(state, tools_by_name, progress_reporter, config.retry)
 
-    async def compressor(state: AgentState) -> dict:
-        return await compressor_node(
-            state, light_llm, cache_store, config.cache.ttl_hours, config.retry
-        )
-
     graph.add_node("orchestrator", orchestrator)
     graph.add_node("tool_executor", tool_executor)
-    graph.add_node("compressor", compressor)
 
     graph.set_entry_point("orchestrator")
 
@@ -68,10 +46,6 @@ def build_graph(
         "tool_executor": "tool_executor",
         END: END,
     })
-    graph.add_conditional_edges("tool_executor", _should_compress, {
-        "compressor": "compressor",
-        "orchestrator": "orchestrator",
-    })
-    graph.add_edge("compressor", "orchestrator")
+    graph.add_edge("tool_executor", "orchestrator")
 
     return graph.compile(checkpointer=checkpointer)

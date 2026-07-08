@@ -51,13 +51,7 @@ class RetryConfig:
 
 
 @dataclass
-class CacheConfig:
-    ttl_hours: int
-
-
-@dataclass
 class AgentConfig:
-    compression_threshold_bytes: int
     recursion_limit: int
     # 進捗表示モード: "auto" (Plan Block を試し失敗で text) / "plan" / "text"
     progress_mode: str
@@ -79,9 +73,7 @@ class StorageConfig:
 class AppConfig:
     slack: SlackConfig
     standard_model: ModelConfig
-    light_model: ModelConfig
     retry: RetryConfig
-    cache: CacheConfig
     agent: AgentConfig
     storage: StorageConfig
 
@@ -101,7 +93,6 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
     provider = models_raw["provider"]
     model_options = models_raw.get("options", {})
     standard_model = ModelConfig(model=f"{provider}:{models_raw['standard']}", options=model_options)
-    light_model = ModelConfig(model=f"{provider}:{models_raw['light']}", options=model_options)
 
     retry_raw = raw.get("retry", {})
     retry = RetryConfig(
@@ -109,12 +100,8 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
         backoff_base_seconds=retry_raw.get("backoff_base_seconds", 1.0),
     )
 
-    cache_raw = raw.get("cache", {})
-    cache = CacheConfig(ttl_hours=cache_raw.get("ttl_hours", 6))
-
     agent_raw = raw.get("agent", {})
     agent = AgentConfig(
-        compression_threshold_bytes=agent_raw.get("compression_threshold_bytes", 10000),
         recursion_limit=agent_raw.get("recursion_limit", 25),
         progress_mode=agent_raw.get("progress_mode", "auto"),
         mcp_tool_timeout_seconds=agent_raw.get("mcp_tool_timeout_seconds", 60.0),
@@ -126,9 +113,7 @@ def load_config(settings_path: str = "settings.json") -> AppConfig:
     return AppConfig(
         slack=slack,
         standard_model=standard_model,
-        light_model=light_model,
         retry=retry,
-        cache=cache,
         agent=agent,
         storage=storage,
     )

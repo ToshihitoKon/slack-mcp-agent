@@ -69,13 +69,10 @@ def test_load_config_full(tmp_path, monkeypatch):
         "models": {
             "provider": "anthropic",
             "standard": "claude-opus",
-            "light": "claude-haiku",
             "options": {"temperature": 0},
         },
         "retry": {"max_attempts": 5, "backoff_base_seconds": 2.0},
-        "cache": {"ttl_hours": 12},
         "agent": {
-            "compression_threshold_bytes": 5000,
             "recursion_limit": 30,
             "progress_mode": "plan",
             "mcp_tool_timeout_seconds": 120,
@@ -88,12 +85,9 @@ def test_load_config_full(tmp_path, monkeypatch):
     assert cfg.slack.bot_token == "xoxb-test"
     assert cfg.slack.allowed_user_ids == ["U1", "U2"]
     assert cfg.standard_model.model == "anthropic:claude-opus"
-    assert cfg.light_model.model == "anthropic:claude-haiku"
     assert cfg.standard_model.options == {"temperature": 0}
     assert cfg.retry.max_attempts == 5
     assert cfg.retry.backoff_base_seconds == 2.0
-    assert cfg.cache.ttl_hours == 12
-    assert cfg.agent.compression_threshold_bytes == 5000
     assert cfg.agent.recursion_limit == 30
     assert cfg.agent.progress_mode == "plan"
     assert cfg.agent.mcp_tool_timeout_seconds == 120
@@ -103,7 +97,7 @@ def test_load_config_full(tmp_path, monkeypatch):
 def test_load_config_applies_defaults(tmp_path):
     settings = {
         "slack": {"bot_token": "b", "app_token": "a"},
-        "models": {"provider": "openai", "standard": "gpt", "light": "gpt-mini"},
+        "models": {"provider": "openai", "standard": "gpt"},
     }
     cfg = load_config(_write_settings(tmp_path, settings))
 
@@ -111,8 +105,6 @@ def test_load_config_applies_defaults(tmp_path):
     assert cfg.slack.allowed_user_ids == []
     assert cfg.retry.max_attempts == 3
     assert cfg.retry.backoff_base_seconds == 1.0
-    assert cfg.cache.ttl_hours == 6
-    assert cfg.agent.compression_threshold_bytes == 10000
     assert cfg.agent.recursion_limit == 25
     assert cfg.agent.progress_mode == "auto"
     assert cfg.agent.mcp_tool_timeout_seconds == 60.0

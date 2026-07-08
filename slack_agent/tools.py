@@ -9,8 +9,6 @@ from langchain_core.tools import BaseTool, StructuredTool
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .cache import CacheStore
-
 logger = logging.getLogger(__name__)
 
 
@@ -36,9 +34,6 @@ async def load_mcp_tools(
         この関数内で開くが、その場合セッションはすぐ閉じられるため通常は渡すこと。
 
     tool_timeout_seconds: ツール呼び出しの応答待ちタイムアウト秒。None なら無制限。
-
-    キャッシュ保存はツール実行レイヤー (tool_executor_node) と
-    compressor_node に集約しているため、ここでは cache_store を扱わない。
     """
     raw = json.loads(Path(mcp_config_path).read_text())
     raw = _expand_env_vars_in_config(raw)
@@ -125,25 +120,3 @@ def _make_langchain_tool(
         coroutine=_arun,
         func=None,
     )
-
-
-def make_cache_fetcher_tool(cache_store: CacheStore) -> BaseTool:
-    """Return the built-in cache_fetcher tool."""
-
-    class _CacheFetcher(BaseTool):
-        name: str = "cache_fetcher"
-        description: str = (
-            "Fetch a previously cached tool result by cache_key. "
-            "Returns the raw result if available, otherwise returns a cache miss message."
-        )
-
-        async def _arun(self, cache_key: str) -> str:
-            entry = cache_store.get(cache_key)
-            if entry is None:
-                return f"Cache miss or expired for key: {cache_key}"
-            return entry.raw_result
-
-        def _run(self, cache_key: str) -> str:
-            raise NotImplementedError("Use async")
-
-    return _CacheFetcher()

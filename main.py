@@ -7,12 +7,11 @@ import sys
 from contextlib import AsyncExitStack
 from pathlib import Path
 
-from slack_agent.cache import InMemoryCacheStore
 from slack_agent.checkpointer import create_checkpointer
 from slack_agent.config import build_llm, load_config, _expand_recursive
 from slack_agent.graph import build_graph
 from slack_agent.slack_handler import create_app, run_app
-from slack_agent.tools import load_mcp_tools, make_cache_fetcher_tool, _connect_server
+from slack_agent.tools import load_mcp_tools, _connect_server
 
 # DEBUG_LLM=1 で LangChain の verbose/debug を有効にし、LLM への入出力を全部出す
 if os.environ.get("DEBUG_LLM"):
@@ -71,9 +70,6 @@ async def main():
     config = load_config(args.settings)
 
     standard_llm = build_llm(config.standard_model)
-    light_llm = build_llm(config.light_model)
-
-    cache_store = InMemoryCacheStore()
 
     # MCP セッションはアプリ稼働中ずっと保持する。run_app まで同じ
     # AsyncExitStack 内で動かし、終了時にまとめてクローズする。
@@ -83,13 +79,10 @@ async def main():
             tool_timeout_seconds=config.agent.mcp_tool_timeout_seconds,
             exit_stack=mcp_stack,
         )
-        cache_fetcher = make_cache_fetcher_tool(cache_store)
-        all_tools = mcp_tools + [cache_fetcher]
-
         # Bind tools to the standard LLM for orchestrator
-        standard_llm = standard_llm.bind_tools(all_tools)
+        standard_llm = standard_llm.bind_tools(mcp_tools)
 
-        tools_by_name = {t.name: t for t in all_tools}
+        tools_by_name = {t.name: t for t in mcp_tools}
 
         extra_prompt = ""
         prompt_path = Path("prompt.md")
@@ -103,9 +96,7 @@ async def main():
         compiled_graph = build_graph(
             config=config,
             standard_llm=standard_llm,
-            light_llm=light_llm,
             tools_by_name=tools_by_name,
-            cache_store=cache_store,
             extra_prompt=extra_prompt,
             checkpointer=checkpointer,
         )

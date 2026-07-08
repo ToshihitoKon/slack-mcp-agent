@@ -7,18 +7,13 @@
   "models": {
     "provider": "openai",
     "standard": "gpt-5-nano-2025-08-07",
-    "light": "gpt-5-nano-2025-08-07",
     "options": {}
   },
   "retry": {
     "max_attempts": 3,
     "backoff_base_seconds": 1.0
   },
-  "cache": {
-    "ttl_hours": 6
-  },
   "agent": {
-    "compression_threshold_bytes": 10000,
     "recursion_limit": 25,
     "progress_mode": "auto",
     "mcp_tool_timeout_seconds": 60

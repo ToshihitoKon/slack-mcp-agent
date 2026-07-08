@@ -170,8 +170,6 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
         # last_bot_response_ts は initial_state に含めない (既存値を維持)
         initial_state: AgentState = {
             "messages": new_replies + [current_human],
-            "compression_threshold": agent_config.compression_threshold_bytes,
-            "cache_references": [],
         }
 
         try:

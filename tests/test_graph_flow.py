@@ -7,13 +7,11 @@ LangGraph 固有のテスト API は不要で、compiled graph を実行して
 """
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
-from slack_agent.cache import CacheStore, InMemoryCacheStore
 from slack_agent.config import (
     AgentConfig,
     AppConfig,
-    CacheConfig,
     ModelConfig,
     RetryConfig,
     SlackConfig,
@@ -45,13 +43,6 @@ class _ScriptedLLM:
         return resp
 
 
-class _CompressorLLM:
-    """compressor 用の light LLM。常に整形済み JSON を返す。"""
-
-    async def ainvoke(self, messages):
-        return AIMessage(content='{"focused_summary": "summary", "content_index": "idx"}')
-
-
 class _FakeTool:
     def __init__(self, result: str):
         self._result = result
@@ -64,10 +55,8 @@ def _config() -> AppConfig:
     return AppConfig(
         slack=SlackConfig(bot_token="b", app_token="a", allowed_user_ids=[]),
         standard_model=ModelConfig(model="x:y", options={}),
-        light_model=ModelConfig(model="x:y", options={}),
         retry=RetryConfig(max_attempts=1, backoff_base_seconds=0),
-        cache=CacheConfig(ttl_hours=6),
-        agent=AgentConfig(compression_threshold_bytes=10000, recursion_limit=25, progress_mode="auto", mcp_tool_timeout_seconds=60),
+        agent=AgentConfig(recursion_limit=25, progress_mode="auto", mcp_tool_timeout_seconds=60),
         storage=StorageConfig(type="memory"),
     )
 
@@ -79,8 +68,6 @@ def _tool_call_ai(tool_name: str, args: dict, call_id: str) -> AIMessage:
 def _initial_state(text: str) -> dict:
     return {
         "messages": [HumanMessage(content=text)],
-        "compression_threshold": 10000,
-        "cache_references": [],
     }
 
 
@@ -99,74 +86,29 @@ async def _collect_node_sequence(graph, state, config=None) -> list[str]:
 async def test_immediate_answer_ends_without_tools():
     """orchestrator が tool_calls 無しを返したら即 END。"""
     llm = _ScriptedLLM([AIMessage(content="direct answer")])
-    graph = build_graph(_config(), llm, _CompressorLLM(), {}, InMemoryCacheStore())
+    graph = build_graph(_config(), llm, {})
 
     seq = await _collect_node_sequence(graph, _initial_state("hi"))
     assert seq == ["orchestrator"]
 
     final = await build_graph(
-        _config(), _ScriptedLLM([AIMessage(content="direct answer")]),
-        _CompressorLLM(), {}, InMemoryCacheStore(),
+        _config(), _ScriptedLLM([AIMessage(content="direct answer")]), {},
     ).ainvoke(_initial_state("hi"))
     assert final["messages"][-1].content == "direct answer"
 
 
 @pytest.mark.asyncio
-async def test_tool_call_small_result_skips_compressor():
-    """tool 実行 → 小さい結果 → compressor を経由せず orchestrator へ戻り END。"""
+async def test_tool_call_round_trip():
+    """tool 実行 → orchestrator へ戻り END。"""
     responses = [
         _tool_call_ai("srv__search", {"q": "x"}, "tc1"),
         AIMessage(content="answer after tool"),
     ]
-    tools = {"srv__search": _FakeTool("small result")}
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+    tools = {"srv__search": _FakeTool("result")}
+    graph = build_graph(_config(), _ScriptedLLM(responses), tools)
 
     seq = await _collect_node_sequence(graph, _initial_state("search x"))
     assert seq == ["orchestrator", "tool_executor", "orchestrator"]
-    assert "compressor" not in seq
-
-
-@pytest.mark.asyncio
-async def test_tool_call_large_result_goes_through_compressor():
-    """tool 実行 → 大きい結果 → compressor 経由 → orchestrator → END。"""
-    responses = [
-        _tool_call_ai("srv__search", {"q": "x"}, "tc1"),
-        AIMessage(content="final answer"),
-    ]
-    tools = {"srv__search": _FakeTool("X" * 20000)}
-    store = InMemoryCacheStore()
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, store)
-
-    seq = await _collect_node_sequence(graph, _initial_state("search x"))
-    assert seq == ["orchestrator", "tool_executor", "compressor", "orchestrator"]
-
-
-@pytest.mark.asyncio
-async def test_large_result_populates_cache_and_references():
-    """圧縮経由でキャッシュ保存と cache_references 登録が起きる。"""
-    responses = [
-        _tool_call_ai("srv__search", {"q": "x"}, "tc1"),
-        AIMessage(content="final answer"),
-    ]
-    tools = {"srv__search": _FakeTool("X" * 20000)}
-    store = InMemoryCacheStore()
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, store)
-
-    final = await graph.ainvoke(_initial_state("search x"))
-
-    expected_key = CacheStore.make_key("srv__search", {"q": "x"})
-    # cache_store に raw が保存される
-    entry = store.get(expected_key)
-    assert entry is not None
-    assert entry.raw_result == "X" * 20000
-    # state の cache_references に登録される
-    refs = final["cache_references"]
-    assert any(r["cache_key"] == expected_key for r in refs)
-    # 最終回答が返る
-    assert final["messages"][-1].content == "final answer"
-    # 圧縮された ToolMessage は要約に置換されている
-    tool_msgs = [m for m in final["messages"] if isinstance(m, ToolMessage)]
-    assert tool_msgs and tool_msgs[0].content.startswith("[Compressed]")
 
 
 @pytest.mark.asyncio
@@ -178,7 +120,7 @@ async def test_multi_tool_round_trips():
         AIMessage(content="done"),
     ]
     tools = {"srv__search": _FakeTool("small")}
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+    graph = build_graph(_config(), _ScriptedLLM(responses), tools)
 
     seq = await _collect_node_sequence(graph, _initial_state("multi"))
     assert seq == [
@@ -197,10 +139,7 @@ async def test_checkpointer_persists_history_across_invocations():
         AIMessage(content="first answer"),
         AIMessage(content="second answer"),
     ])
-    graph = build_graph(
-        _config(), llm, _CompressorLLM(), {}, InMemoryCacheStore(),
-        checkpointer=checkpointer,
-    )
+    graph = build_graph(_config(), llm, {}, checkpointer=checkpointer)
     cfg = {"configurable": {"thread_id": "thread-1"}}
 
     first = await graph.ainvoke(_initial_state("hello"), config=cfg)
@@ -228,10 +167,7 @@ async def test_checkpointer_isolates_distinct_threads():
         AIMessage(content="answer A"),
         AIMessage(content="answer B"),
     ])
-    graph = build_graph(
-        _config(), llm, _CompressorLLM(), {}, InMemoryCacheStore(),
-        checkpointer=checkpointer,
-    )
+    graph = build_graph(_config(), llm, {}, checkpointer=checkpointer)
 
     a = await graph.ainvoke(_initial_state("thread A msg"), config={"configurable": {"thread_id": "A"}})
     b = await graph.ainvoke(_initial_state("thread B msg"), config={"configurable": {"thread_id": "B"}})
@@ -263,7 +199,7 @@ async def test_progress_reporter_receives_task_transitions():
         AIMessage(content="done"),
     ]
     tools = {"srv__search": _FakeTool("small")}
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+    graph = build_graph(_config(), _ScriptedLLM(responses), tools)
 
     reporter = _RecordingReporter()
     await graph.ainvoke(
@@ -296,7 +232,7 @@ async def test_progress_reporter_reasoning_in_title_dump_in_details():
         AIMessage(content="done"),
     ]
     tools = {"srv__search": _FakeTool("small")}
-    graph = build_graph(_config(), _ScriptedLLM(responses), _CompressorLLM(), tools, InMemoryCacheStore())
+    graph = build_graph(_config(), _ScriptedLLM(responses), tools)
 
     reporter = _RecordingReporter()
     await graph.ainvoke(
