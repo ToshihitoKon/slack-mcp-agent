@@ -7,7 +7,7 @@ from slack_bolt.async_app import AsyncApp
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 
 from .config import AppConfig
-from .progress import LazyReporter
+from .progress import RESPONDING_TASK_ID, STATUS_COMPLETE, STATUS_IN_PROGRESS, LazyReporter
 from .state import AgentState
 from .thread_history import fetch_new_replies
 
@@ -145,7 +145,6 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
             logger.info("  new_replies[%d]: %r", i, str(m.content)[:80])
 
         # 進捗表示: Plan Block (対応環境) またはテキストにフォールバック (Issue #6)。
-        # 初回タスクまで実際の投稿は遅延される。
         # chat.startStream はチャンネルへのストリーミングで recipient_team_id と
         # recipient_user_id が両方必須。event/body から取得する。
         team_id = body.get("team_id") or event.get("team")
@@ -156,6 +155,15 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
             mode=agent_config.progress_mode,
             recipient_team_id=team_id,
             recipient_user_id=user_id,
+        )
+
+        # 「回答を生成中…」を最上位タスクとして先に追加する。ツールタスクが
+        # 全て complete になった瞬間だけこれが無いと Plan Block 全体の見出しが
+        # complete 扱いになってしまうため、実行全体を覆うタスクとして扱う。
+        await progress_reporter.update_task(
+            RESPONDING_TASK_ID,
+            title="回答を生成中…",
+            status=STATUS_IN_PROGRESS,
         )
 
         current_human = HumanMessage(content=text)
@@ -183,6 +191,12 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
             logger.exception("Agent failed: %s", exc)
             answer = _ERROR_MESSAGE
         finally:
+            try:
+                await progress_reporter.update_task(
+                    RESPONDING_TASK_ID, status=STATUS_COMPLETE
+                )
+            except Exception as exc:
+                logger.warning("Failed to complete responding task: %s", exc)
             try:
                 await progress_reporter.finish()
             except Exception as exc:
