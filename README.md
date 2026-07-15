@@ -58,6 +58,12 @@ cp mcp_config_sample.json mcp_config.json
 cp prompt_sample.md prompt.md   # 任意
 ```
 
+`Dockerfile` も Git 管理外。`Dockerfile_sample` をコピーして使う。
+
+```bash
+cp Dockerfile_sample Dockerfile
+```
+
 ### `settings.json`
 
 アプリ全体の設定。`${VAR}` / `${VAR:-default}` 形式で環境変数を展開できる。
@@ -165,8 +171,10 @@ DEBUG_LLM=1 uv run python main.py
 
 ## Docker
 
+`Dockerfile` は Git 管理外なので、`Dockerfile_sample` をコピーしてから使う（前述の「設定」参照）。
+
 ```bash
-docker build -t slack-mcp-agent .
+docker build -f Dockerfile -t slack-mcp-agent .
 docker run --rm \
   -e SLACK_BOT_TOKEN -e SLACK_APP_TOKEN -e OPENAI_API_KEY \
   -v "$PWD/settings.json:/app/settings.json" \
@@ -190,7 +198,7 @@ uv run --extra dev pytest -q
 ├── settings_sample.json    # アプリ設定のサンプル（settings.json にコピーして使う）
 ├── mcp_config_sample.json  # MCP サーバー定義のサンプル（mcp_config.json にコピーして使う）
 ├── prompt_sample.md        # orchestrator への追加システムプロンプトのサンプル（任意）
-├── Dockerfile
+├── Dockerfile_sample       # Docker ビルド定義のサンプル（Dockerfile にコピーして使う）
 ├── slack_agent/            # エージェント本体（ノード・グラフ・ツール・設定など）
 └── tests/                  # テスト（tests/README.md 参照）
 ```
