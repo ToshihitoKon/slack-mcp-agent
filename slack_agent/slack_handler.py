@@ -14,7 +14,18 @@ from .thread_history import fetch_new_replies
 logger = logging.getLogger(__name__)
 
 _ERROR_MESSAGE = "申し訳ありません。エラーが発生しました。しばらくしてから再度お試しください。"
+_EMPTY_RESPONSE_MESSAGE = "回答を生成できませんでした。もう一度お試しください。"
 _MENTION_PATTERN = re.compile(r"<@[^>]+>")
+
+
+def _ensure_non_empty_answer(answer: str, *, thread_ts: str) -> str:
+    """Slack の chat.postMessage は空文字列の text で no_text エラーになるため、
+    エージェントの最終応答が空だった場合はフォールバック文言に置き換える。
+    """
+    if answer.strip():
+        return answer
+    logger.warning("Agent returned empty content (thread=%s)", thread_ts)
+    return _EMPTY_RESPONSE_MESSAGE
 
 
 class ThreadLockManager:
@@ -184,7 +195,7 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
                 },
             )
             final_message = final_state["messages"][-1]
-            answer = str(final_message.content)
+            answer = _ensure_non_empty_answer(str(final_message.content), thread_ts=thread_ts)
         except Exception as exc:
             logger.exception("Agent failed: %s", exc)
             answer = _ERROR_MESSAGE

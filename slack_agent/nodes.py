@@ -59,6 +59,13 @@ async def orchestrator_node(
         backoff_base=retry_config.backoff_base_seconds,
     )
 
+    if not str(response.content).strip() and not response.tool_calls:
+        logger.warning(
+            "orchestrator response has empty content and no tool_calls "
+            "(stop_reason=%r)",
+            response.response_metadata.get("stop_reason"),
+        )
+
     return {
         "messages": [response],
     }
