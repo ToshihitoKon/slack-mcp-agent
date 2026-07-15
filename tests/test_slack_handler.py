@@ -1,10 +1,15 @@
-"""ThreadLockManager の直列化・即時解放挙動を検証する (Issue #4)。"""
+"""ThreadLockManager の直列化・即時解放挙動、および空応答ガードを検証する。"""
 
 import asyncio
 
 import pytest
 
-from slack_agent.slack_handler import ThreadLockManager
+from slack_agent.slack_handler import (
+    _EMPTY_RESPONSE_MESSAGE,
+    _REFUSAL_MESSAGE,
+    _ensure_non_empty_answer,
+    ThreadLockManager,
+)
 
 
 @pytest.mark.asyncio
@@ -124,3 +129,22 @@ async def test_release_unknown_key_is_safe():
     manager = ThreadLockManager()
     await manager.release("never-acquired")
     assert manager.active_count() == 0
+
+
+def test_ensure_non_empty_answer_passes_through_non_empty_text():
+    """通常の応答はそのまま返す。"""
+    assert _ensure_non_empty_answer("こんにちは", thread_ts="100") == "こんにちは"
+
+
+@pytest.mark.parametrize("answer", ["", "   ", "\n"])
+def test_ensure_non_empty_answer_falls_back_on_empty_text(answer):
+    """空文字列や空白のみの応答はフォールバック文言に置き換える (no_text エラー防止)。"""
+    assert _ensure_non_empty_answer(answer, thread_ts="100") == _EMPTY_RESPONSE_MESSAGE
+
+
+def test_ensure_non_empty_answer_uses_refusal_message_on_refusal_stop_reason():
+    """stop_reason=refusal は Claude の安全性分類器による拒否なので、
+    再試行を促す通常の空応答メッセージとは別の専用文言を返す。"""
+    answer = _ensure_non_empty_answer("", thread_ts="100", stop_reason="refusal")
+    assert answer == _REFUSAL_MESSAGE
+    assert answer != _EMPTY_RESPONSE_MESSAGE

@@ -14,7 +14,29 @@ from .thread_history import fetch_new_replies
 logger = logging.getLogger(__name__)
 
 _ERROR_MESSAGE = "申し訳ありません。エラーが発生しました。しばらくしてから再度お試しください。"
+_EMPTY_RESPONSE_MESSAGE = "回答を生成できませんでした。もう一度お試しください。"
+# stop_reason=refusal は Claude の安全性分類器がリクエストを拒否した場合に返る値。
+# 同じ入力なら再試行しても同じ結果になりやすいため、通常の空応答とは別の文言で
+# 「入力側に問題がありそう」と伝える (「もう一度お試しください」は誤誘導になる)。
+_REFUSAL_MESSAGE = (
+    "この内容には応答できませんでした。参照した内容がモデルの安全性フィルタに"
+    "引っかかった可能性があります。質問の仕方や参照先を変えてお試しください。"
+)
 _MENTION_PATTERN = re.compile(r"<@[^>]+>")
+
+
+def _ensure_non_empty_answer(answer: str, *, thread_ts: str, stop_reason: str | None = None) -> str:
+    """Slack の chat.postMessage は空文字列の text で no_text エラーになるため、
+    エージェントの最終応答が空だった場合はフォールバック文言に置き換える。
+    """
+    if answer.strip():
+        return answer
+    logger.warning(
+        "Agent returned empty content (thread=%s stop_reason=%r)", thread_ts, stop_reason
+    )
+    if stop_reason == "refusal":
+        return _REFUSAL_MESSAGE
+    return _EMPTY_RESPONSE_MESSAGE
 
 
 class ThreadLockManager:
@@ -184,7 +206,10 @@ def create_app(config: AppConfig, compiled_graph, agent_config) -> AsyncApp:
                 },
             )
             final_message = final_state["messages"][-1]
-            answer = str(final_message.content)
+            stop_reason = getattr(final_message, "response_metadata", {}).get("stop_reason")
+            answer = _ensure_non_empty_answer(
+                str(final_message.content), thread_ts=thread_ts, stop_reason=stop_reason
+            )
         except Exception as exc:
             logger.exception("Agent failed: %s", exc)
             answer = _ERROR_MESSAGE
